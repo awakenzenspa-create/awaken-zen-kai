@@ -299,14 +299,18 @@ app.post("/whisper", (req, res) => {
 <Response><Say voice="alice">Awaken Zen Spa call.</Say></Response>`);
 });
 
-// ── Helper: extract tool parameters from Vapi's payload ──────────────────────
-// Vapi sends params either directly in req.body or nested in message.toolCallList
+// ── Helper: extract tool parameters and toolCallId from Vapi's payload ───────
 function extractParams(body) {
   // Direct params (simple tool call)
   if (body.phoneNumber || body.serviceKey || body.date) return body;
   // Nested in message.toolCallList[0].function.arguments
   try {
     const args = body?.message?.toolCallList?.[0]?.function?.arguments;
+    if (args) return typeof args === "string" ? JSON.parse(args) : args;
+  } catch (e) {}
+  // Nested in message.toolCalls[0].function.arguments
+  try {
+    const args = body?.message?.toolCalls?.[0]?.function?.arguments;
     if (args) return typeof args === "string" ? JSON.parse(args) : args;
   } catch (e) {}
   // Nested in message.functionCall.parameters
@@ -317,75 +321,92 @@ function extractParams(body) {
   return body;
 }
 
+// ── Helper: extract toolCallId from Vapi's payload ────────────────────────────
+function extractToolCallId(body) {
+  return body?.message?.toolCallList?.[0]?.id ||
+         body?.message?.toolCalls?.[0]?.id ||
+         body?.message?.functionCall?.id ||
+         body?.toolCallId ||
+         "unknown";
+}
+
+// ── Helper: format response for Vapi ─────────────────────────────────────────
+// Vapi requires: { results: [{ toolCallId: "...", result: "single-line string" }] }
+function vapiResponse(res, toolCallId, resultText) {
+  const singleLine = String(resultText).replace(/\n/g, " ").replace(/\r/g, "");
+  res.json({
+    results: [{ toolCallId, result: singleLine }]
+  });
+}
+
 // ── Route: Send Booking Link ──────────────────────────────────────────────────
 app.post("/send-booking-link", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
   try {
     const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number || params.to;
     if (!phoneNumber) {
       console.log("sendBookingLink — no phone number. Body:", JSON.stringify(req.body).slice(0, 300));
-      return res.json({ result: "Booking link ready — please provide the caller's phone number." });
+      return vapiResponse(res, toolCallId, "Booking link ready — please ask the caller for their phone number to send the link.");
     }
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Here's your booking link:\n\n${BOOKING_URL}\n\nSee you soon ✨`
     });
-    res.json({ result: "Booking link sent." });
+    vapiResponse(res, toolCallId, "Booking link sent successfully.");
   } catch (err) {
     console.error("sendBookingLink error:", err.message);
-    res.status(500).json({ result: "Failed to send booking link." });
+    vapiResponse(res, toolCallId, "Failed to send booking link.");
   }
 });
 
 // ── Route: Send Gift Card Link ────────────────────────────────────────────────
 app.post("/send-gift-card-link", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
   try {
     const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number || params.to;
     if (!phoneNumber) {
-      return res.json({ result: "Gift card link ready — please provide the caller's phone number." });
+      return vapiResponse(res, toolCallId, "Gift card link ready — please ask the caller for their phone number.");
     }
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Gift cards available here:\n\n${GIFT_CARD_URL}\n\nA beautiful gift ✨`
     });
-    res.json({ result: "Gift card link sent." });
+    vapiResponse(res, toolCallId, "Gift card link sent successfully.");
   } catch (err) {
     console.error("sendGiftCardLink error:", err.message);
-    res.status(500).json({ result: "Failed to send gift card link." });
+    vapiResponse(res, toolCallId, "Failed to send gift card link.");
   }
 });
 
 // ── Route: Check Availability ─────────────────────────────────────────────────
 app.post("/check-availability", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
   try {
     const { serviceKey, duration, date } = extractParams(req.body);
 
-    // Resolve service
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
     if (!service) {
-      return res.json({ result: `I wasn't able to find that service. Could you clarify which service you're interested in?` });
+      return vapiResponse(res, toolCallId, "I wasn't able to find that service. Could you clarify which service you're interested in?");
     }
 
-    // Resolve duration
     const dur = String(duration || "60");
     const variationId = service.variations[dur];
     if (!variationId) {
       const available = Object.keys(service.variations).join(", ");
-      return res.json({ result: `${service.label} is available in ${available} minute sessions.` });
+      return vapiResponse(res, toolCallId, `${service.label} is available in ${available} minute sessions.`);
     }
 
-    // Resolve date
     const resolved = resolveDate(date || "tomorrow");
     if (!resolved) {
-      return res.json({ result: "I couldn't determine that date — could you clarify?" });
+      return vapiResponse(res, toolCallId, "I couldn't determine that date — could you clarify?");
     }
     const dateStr = formatDateForSquare(resolved);
 
-    // Query Square Bookings API for availability
     const data = await squareRequest("POST", "/bookings/availability/search", {
       query: {
         filter: {
@@ -408,38 +429,34 @@ app.post("/check-availability", async (req, res) => {
 
     const slots = data.availabilities || [];
     if (slots.length === 0) {
-      return res.json({
-        result: `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`
-      });
+      return vapiResponse(res, toolCallId, `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`);
     }
 
-    // Get unique times (deduplicate same time across team members)
     const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
     const timeList = uniqueTimes.join(", ");
+    const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
-    res.json({
-      result: `For ${service.label} (${dur} min) on ${resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}, we have availability at: ${timeList}. Which time works best for you?`,
-      slots: slots.slice(0, 6)
-    });
+    vapiResponse(res, toolCallId, `For ${service.label} (${dur} min) on ${dateDisplay}, we have availability at: ${timeList}. Which time works best for you?`);
 
   } catch (err) {
     console.error("check-availability error:", err);
-    res.status(500).json({ result: "I had trouble checking availability — please try our booking page at awakenzenspa.com/booking." });
+    vapiResponse(res, toolCallId, "I had trouble checking availability. Would you like me to send you our booking link instead?");
   }
 });
 
 // ── Route: Book Appointment ───────────────────────────────────────────────────
 app.post("/book-appointment", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
   try {
     const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = extractParams(req.body);
 
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
-    if (!service) return res.json({ result: "Service not found." });
+    if (!service) return vapiResponse(res, toolCallId, "Service not found.");
 
     const dur = String(duration || "60");
     const variationId = service.variations[dur];
-    if (!variationId) return res.json({ result: "Duration not available for this service." });
+    if (!variationId) return vapiResponse(res, toolCallId, "Duration not available for this service.");
 
     // Create or find customer
     let customerId = null;
@@ -485,9 +502,7 @@ app.post("/book-appointment", async (req, res) => {
 
     if (bookingRes.errors) {
       console.error("Booking error:", bookingRes.errors);
-      return res.json({
-        result: `I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.`
-      });
+      return vapiResponse(res, toolCallId, "I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.");
     }
 
     const booking = bookingRes.booking;
@@ -514,19 +529,17 @@ app.post("/book-appointment", async (req, res) => {
       });
     }
 
-    res.json({
-      result: `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your appointment details and a link to add a card on file for our cancellation policy. We look forward to seeing you at Awaken Zen Spa!`,
-      booking_id: booking.id
-    });
+    vapiResponse(res, toolCallId, `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your appointment details and a link to add a card on file for our cancellation policy. We look forward to seeing you at Awaken Zen Spa!`);
 
   } catch (err) {
     console.error("book-appointment error:", err);
-    res.status(500).json({ result: "I had trouble completing that booking. Let me send you our booking link instead." });
+    vapiResponse(res, toolCallId, "I had trouble completing that booking. Let me send you our booking link instead.");
   }
 });
 
 // ── Route: Send booking confirmation SMS manually ─────────────────────────────
 app.post("/send-booking-confirmation", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
   try {
     const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number;
@@ -536,9 +549,9 @@ app.post("/send-booking-confirmation", async (req, res) => {
       to: phoneNumber,
       body: `Hi! Your Awaken Zen Spa appointment is confirmed.\n\n${appointmentDetails}\n\nPlease add a card on file:\n${BOOKING_URL}\n\nQuestions? (602) 688-2578 ✨`
     });
-    res.json({ result: "Confirmation sent." });
+    vapiResponse(res, toolCallId, "Confirmation sent.");
   } catch (err) {
-    res.status(500).json({ result: "Failed to send confirmation." });
+    vapiResponse(res, toolCallId, "Failed to send confirmation.");
   }
 });
 
