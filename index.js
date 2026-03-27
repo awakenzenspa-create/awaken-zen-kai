@@ -7,8 +7,8 @@ const express = require("express");
 const twilio  = require("twilio");
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const twilioClient  = twilio(
@@ -299,10 +299,33 @@ app.post("/whisper", (req, res) => {
 <Response><Say voice="alice">Awaken Zen Spa call.</Say></Response>`);
 });
 
+// ── Helper: extract tool parameters from Vapi's payload ──────────────────────
+// Vapi sends params either directly in req.body or nested in message.toolCallList
+function extractParams(body) {
+  // Direct params (simple tool call)
+  if (body.phoneNumber || body.serviceKey || body.date) return body;
+  // Nested in message.toolCallList[0].function.arguments
+  try {
+    const args = body?.message?.toolCallList?.[0]?.function?.arguments;
+    if (args) return typeof args === "string" ? JSON.parse(args) : args;
+  } catch (e) {}
+  // Nested in message.functionCall.parameters
+  try {
+    const params = body?.message?.functionCall?.parameters;
+    if (params) return typeof params === "string" ? JSON.parse(params) : params;
+  } catch (e) {}
+  return body;
+}
+
 // ── Route: Send Booking Link ──────────────────────────────────────────────────
 app.post("/send-booking-link", async (req, res) => {
   try {
-    const { phoneNumber } = req.body;
+    const params = extractParams(req.body);
+    const phoneNumber = params.phoneNumber || params.phone_number || params.to;
+    if (!phoneNumber) {
+      console.log("sendBookingLink — no phone number. Body:", JSON.stringify(req.body).slice(0, 300));
+      return res.json({ result: "Booking link ready — please provide the caller's phone number." });
+    }
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
@@ -310,6 +333,7 @@ app.post("/send-booking-link", async (req, res) => {
     });
     res.json({ result: "Booking link sent." });
   } catch (err) {
+    console.error("sendBookingLink error:", err.message);
     res.status(500).json({ result: "Failed to send booking link." });
   }
 });
@@ -317,7 +341,11 @@ app.post("/send-booking-link", async (req, res) => {
 // ── Route: Send Gift Card Link ────────────────────────────────────────────────
 app.post("/send-gift-card-link", async (req, res) => {
   try {
-    const { phoneNumber } = req.body;
+    const params = extractParams(req.body);
+    const phoneNumber = params.phoneNumber || params.phone_number || params.to;
+    if (!phoneNumber) {
+      return res.json({ result: "Gift card link ready — please provide the caller's phone number." });
+    }
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
@@ -325,15 +353,15 @@ app.post("/send-gift-card-link", async (req, res) => {
     });
     res.json({ result: "Gift card link sent." });
   } catch (err) {
+    console.error("sendGiftCardLink error:", err.message);
     res.status(500).json({ result: "Failed to send gift card link." });
   }
 });
 
 // ── Route: Check Availability ─────────────────────────────────────────────────
-// Called by Kai when client asks about available times
 app.post("/check-availability", async (req, res) => {
   try {
-    const { serviceKey, duration, date } = req.body;
+    const { serviceKey, duration, date } = extractParams(req.body);
 
     // Resolve service
     const svcKey = (serviceKey || "").toLowerCase();
@@ -403,7 +431,7 @@ app.post("/check-availability", async (req, res) => {
 // ── Route: Book Appointment ───────────────────────────────────────────────────
 app.post("/book-appointment", async (req, res) => {
   try {
-    const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = req.body;
+    const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = extractParams(req.body);
 
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
@@ -500,7 +528,9 @@ app.post("/book-appointment", async (req, res) => {
 // ── Route: Send booking confirmation SMS manually ─────────────────────────────
 app.post("/send-booking-confirmation", async (req, res) => {
   try {
-    const { phoneNumber, appointmentDetails } = req.body;
+    const params = extractParams(req.body);
+    const phoneNumber = params.phoneNumber || params.phone_number;
+    const appointmentDetails = params.appointmentDetails || params.appointment_details;
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
