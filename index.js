@@ -608,5 +608,11 @@ app.get("/square-info", async (req, res) => {
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
+// ── Catch-all POST for Vapi webhook events (status, speech, etc.) ─────────────
+app.post("/", (req, res) => {
+  // Vapi sends many event types to the server URL — just acknowledge them all
+  res.json({ received: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
