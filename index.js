@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Awaken Zen Spa — Kai Webhook Server (Updated with Time-Based Routing)
+// Awaken Zen Spa — Kai Webhook Server
+// Full build: time routing, SMS tools, Square availability + booking
 // ─────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
@@ -15,105 +16,511 @@ const twilioClient  = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-const TWILIO_NUMBER  = process.env.TWILIO_PHONE_NUMBER; // your Twilio number
-const VAPI_NUMBER    = process.env.VAPI_PHONE_NUMBER;   // Vapi assigns this
-const OWNER_CELL     = "+16232196907";                   // Mint phone
-const BOOKING_URL    = "https://awakenzenspa.com/booking";
-const GIFT_CARD_URL  = "https://awakenzenspa.com/gift-cards";
+const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
+const VAPI_NUMBER     = process.env.VAPI_PHONE_NUMBER;
+const OWNER_CELL      = "+16232196907";
+const BOOKING_URL     = "https://awakenzenspa.com/booking";
+const GIFT_CARD_URL   = "https://awakenzenspa.com/gift-cards";
+const LOCATION_ID     = "TMRQ3D20EFD1X";
+const SQUARE_TOKEN    = process.env.SQUARE_ACCESS_TOKEN;
+const SQUARE_BASE     = "https://connect.squareup.com/v2";
+const SQUARE_VERSION  = "2024-01-18";
 
-// ── Time-based routing helper ─────────────────────────────────────────────────
-// Arizona = America/Phoenix = UTC-7 year-round (no DST)
-function isLiveWindow() {
-  const now = new Date();
-  // Convert to Arizona time
-  const azTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Phoenix" }));
-  const hours   = azTime.getHours();
-  const minutes = azTime.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
+// ── Team Members ──────────────────────────────────────────────────────────────
+const TEAM_MEMBERS = {
+  brant:   { id: "OVUiDLRyxkDxB12f_8w9", name: "Brant" },
+  trevor:  { id: "TMvKNbcHqsI4aECK",     name: "Trevor" }
+};
 
-  // 8:00 AM = 480 min, 9:30 AM = 570 min
-  return totalMinutes >= 480 && totalMinutes < 570;
+// ── Service Variation IDs for bookable services ───────────────────────────────
+// Format: serviceName -> { "60": variationId, "90": variationId, "120": variationId }
+const SERVICES = {
+  "european royalty": {
+    label: "European Royalty: Classic Swedish",
+    variations: {
+      "60":  "TIB77G2AIP7GABDSWZFXN6FF",
+      "90":  "QAVQO7BGDYOVEI65CWUCOWY7",
+      "120": "W7KH4DISA5C7BQMNED2OIGKM"
+    }
+  },
+  "swedish": {
+    label: "European Royalty: Classic Swedish",
+    variations: {
+      "60":  "TIB77G2AIP7GABDSWZFXN6FF",
+      "90":  "QAVQO7BGDYOVEI65CWUCOWY7",
+      "120": "W7KH4DISA5C7BQMNED2OIGKM"
+    }
+  },
+  "muscle mender": {
+    label: "Muscle Mender: Deep Tissue",
+    variations: {
+      "60":  "BIWQQPHXSAC25JHMLKEIYVVV",
+      "90":  "F4D4WJDBUV6VPW3NZ5WUPAWA",
+      "120": "XP5NCMNL7ZSPKK44GFN46BW3"
+    }
+  },
+  "deep tissue": {
+    label: "Muscle Mender: Deep Tissue",
+    variations: {
+      "60":  "BIWQQPHXSAC25JHMLKEIYVVV",
+      "90":  "F4D4WJDBUV6VPW3NZ5WUPAWA",
+      "120": "XP5NCMNL7ZSPKK44GFN46BW3"
+    }
+  },
+  "spring senses": {
+    label: "Spring Senses: Lymphatic Drainage",
+    variations: {
+      "60":  "K2W6NJ6KSTSVZWPKE3L7WIWD",
+      "90":  "TIQJY3TSW6ZWJ27X2ENK2LKF",
+      "120": "6VULYOQRLLMEWRZBM5DEWVQE"
+    }
+  },
+  "lymphatic": {
+    label: "Spring Senses: Lymphatic Drainage",
+    variations: {
+      "60":  "K2W6NJ6KSTSVZWPKE3L7WIWD",
+      "90":  "TIQJY3TSW6ZWJ27X2ENK2LKF",
+      "120": "6VULYOQRLLMEWRZBM5DEWVQE"
+    }
+  },
+  "sole symphony": {
+    label: "Sole Symphony: Ashiatsu Barefoot Massage",
+    variations: {
+      "60":  "P347T32CDIANCUFTNRFR573O",
+      "90":  "Q5RG75PJSA432POINYAKY24A",
+      "120": "73Z3KGC536LSV32TXW6XP4AW"
+    }
+  },
+  "ashiatsu": {
+    label: "Sole Symphony: Ashiatsu Barefoot Massage",
+    variations: {
+      "60":  "P347T32CDIANCUFTNRFR573O",
+      "90":  "Q5RG75PJSA432POINYAKY24A",
+      "120": "73Z3KGC536LSV32TXW6XP4AW"
+    }
+  },
+  "warm stone": {
+    label: "Warm Stone Retreat",
+    variations: {
+      "90":  "6XAXNAZIE3MDEZBLB3GD5UYU",
+      "120": "K7XIEBQ2DTYB4YF5TCHLNMXJ"
+    }
+  },
+  "hot stone": {
+    label: "Warm Stone Retreat",
+    variations: {
+      "90":  "6XAXNAZIE3MDEZBLB3GD5UYU",
+      "120": "K7XIEBQ2DTYB4YF5TCHLNMXJ"
+    }
+  },
+  "luxury spa": {
+    label: "Luxury Spa Experience",
+    variations: {
+      "120": "TIC4IYJZHISU4ZCBHZIYKTUT"
+    }
+  },
+  "head scalp": {
+    label: "Radiant Head & Scalp Experience",
+    variations: {
+      "120": "ZQQHCBPQNW2HCHKYW7HQ3VWX"
+    }
+  },
+  "radiant head": {
+    label: "Radiant Head & Scalp Experience",
+    variations: {
+      "120": "ZQQHCBPQNW2HCHKYW7HQ3VWX"
+    }
+  },
+  "calm and clear": {
+    label: "Calm and Clear: Relaxation Facial",
+    variations: {
+      "60": "HAAWAKV7TD7L6OD27CNZ2A33",
+      "90": "UUNTT5FDE6MYNJGEMLEB7STI"
+    }
+  },
+  "relaxation facial": {
+    label: "Calm and Clear: Relaxation Facial",
+    variations: {
+      "60": "HAAWAKV7TD7L6OD27CNZ2A33",
+      "90": "UUNTT5FDE6MYNJGEMLEB7STI"
+    }
+  },
+  "youthful glow": {
+    label: "Youthful Glow: Anti-Aging Facial",
+    variations: {
+      "60": "LAEOGJ23JVQGXQ2SD4UWECJV",
+      "90": "33L2RRNH6UCPWLUTEZFRHTEM"
+    }
+  },
+  "anti aging": {
+    label: "Youthful Glow: Anti-Aging Facial",
+    variations: {
+      "60": "LAEOGJ23JVQGXQ2SD4UWECJV",
+      "90": "33L2RRNH6UCPWLUTEZFRHTEM"
+    }
+  },
+  "microdermabrasion": {
+    label: "Micro-Dermabrasion Treatment",
+    variations: {
+      "60": "4LWHUA7X53NZFBT3FB54J272",
+      "90": "SYT7F6KBIPDXRN5KFXCKWE5U"
+    }
+  },
+  "microderm": {
+    label: "Micro-Dermabrasion Treatment",
+    variations: {
+      "60": "4LWHUA7X53NZFBT3FB54J272",
+      "90": "SYT7F6KBIPDXRN5KFXCKWE5U"
+    }
+  },
+  "dermaplane": {
+    label: "Dermaplane Treatment",
+    variations: {
+      "60": "DQVFGWUDTDG3ID5VDHD2FORT",
+      "90": "EG3TALRSZNFYB6FIURQ6URS6"
+    }
+  },
+  "microneedling": {
+    label: "Micro-Needling Treatment",
+    variations: {
+      "60": "3DYWCG6NEV3PBAUXHMNYWT4V"
+    }
+  },
+  "waxing brows": {
+    label: "Waxing - Brows",
+    variations: { "20": "KXXXZFA5YVEKGKFEF2I2PWUZ" }
+  },
+  "waxing lip": {
+    label: "Waxing - Lip & Chin",
+    variations: { "15": "CPBUQUO4JTD24G5ULN2AE7WW" }
+  },
+  "full face wax": {
+    label: "Full Face Wax",
+    variations: { "30": "ILEAGQTQEJMAP7KJH527CHUA" }
+  },
+  "brow lamination": {
+    label: "Brow Lamination",
+    variations: { "45": "UMOB6VGE2XHHMX3S3AYVG4SX" }
+  }
+};
+
+// ── Square API helper ─────────────────────────────────────────────────────────
+async function squareRequest(method, path, body = null) {
+  const opts = {
+    method,
+    headers: {
+      "Square-Version": SQUARE_VERSION,
+      "Authorization": `Bearer ${SQUARE_TOKEN}`,
+      "Content-Type": "application/json"
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${SQUARE_BASE}${path}`, opts);
+  return res.json();
 }
 
-// ── Route: Inbound call from Google Voice ─────────────────────────────────────
-// Point your Twilio number's "A Call Comes In" webhook here
+// ── Format date helper ────────────────────────────────────────────────────────
+// Accepts: "thursday", "tomorrow", "next monday", "march 28", "3/28"
+function resolveDate(input) {
+  const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Phoenix" }));
+  const today = now.getDay();
+  const lower = input.toLowerCase().trim();
+
+  if (lower === "today") return now;
+  if (lower === "tomorrow") {
+    const d = new Date(now); d.setDate(d.getDate() + 1); return d;
+  }
+
+  const dayIdx = days.indexOf(lower);
+  if (dayIdx !== -1) {
+    const diff = (dayIdx - today + 7) % 7 || 7;
+    const d = new Date(now); d.setDate(d.getDate() + diff); return d;
+  }
+
+  // Try parsing as a date string
+  const parsed = new Date(input);
+  if (!isNaN(parsed)) return parsed;
+
+  return null;
+}
+
+function formatDateForSquare(date) {
+  return date.toISOString().split("T")[0]; // YYYY-MM-DD
+}
+
+function formatTimeForDisplay(isoString) {
+  const d = new Date(isoString);
+  return d.toLocaleTimeString("en-US", {
+    timeZone: "America/Phoenix",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  });
+}
+
+// ── Time-based routing ────────────────────────────────────────────────────────
+function isLiveWindow() {
+  const now = new Date();
+  const azTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Phoenix" }));
+  const total = azTime.getHours() * 60 + azTime.getMinutes();
+  return total >= 480 && total < 570; // 8:00–9:30 AM
+}
+
+// ── Route: Inbound call ───────────────────────────────────────────────────────
 app.post("/incoming", (req, res) => {
   const twiml = new VoiceResponse();
-
   if (isLiveWindow()) {
-    // 8:00–9:30 AM → ring owner cell directly with whisper
-    console.log("[ROUTING] Live window — forwarding to owner cell");
     const dial = twiml.dial({ timeout: 20, action: "/no-answer" });
-    dial.number(
-      { url: `${process.env.BASE_URL}/whisper` },
-      OWNER_CELL
-    );
+    dial.number({ url: `${process.env.BASE_URL}/whisper` }, OWNER_CELL);
   } else {
-    // All other times → send to Kai on Vapi
-    console.log("[ROUTING] Outside live window — forwarding to Kai (Vapi)");
     const dial = twiml.dial({ timeout: 30, action: "/no-answer" });
     dial.number(VAPI_NUMBER);
   }
-
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
 // ── Route: No answer fallback ─────────────────────────────────────────────────
-// If owner doesn't pick up during live window, roll over to Kai
 app.post("/no-answer", (req, res) => {
   const twiml = new VoiceResponse();
-  const dialStatus = req.body.DialCallStatus;
-
-  if (dialStatus !== "completed" && dialStatus !== "answered") {
-    // Owner didn't pick up — send to Kai
-    console.log("[ROUTING] No answer — rolling over to Kai");
+  if (req.body.DialCallStatus !== "completed" && req.body.DialCallStatus !== "answered") {
     const dial = twiml.dial();
     dial.number(VAPI_NUMBER);
   }
-
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// ── Route: Whisper (plays to owner before connecting caller) ──────────────────
+// ── Route: Whisper ────────────────────────────────────────────────────────────
 app.post("/whisper", (req, res) => {
   res.type("text/xml");
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice" language="en-US">Awaken Zen Spa call.</Say>
-</Response>`);
+<Response><Say voice="alice">Awaken Zen Spa call.</Say></Response>`);
 });
 
-// ── Route: Send Booking Link via SMS ─────────────────────────────────────────
+// ── Route: Send Booking Link ──────────────────────────────────────────────────
 app.post("/send-booking-link", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
-      to:   phoneNumber,
-      body: `Hi, it's Awaken Zen Spa! Here's your booking link — grab your spot in seconds:\n\n${BOOKING_URL}\n\nSee you soon ✨`
+      to: phoneNumber,
+      body: `Hi, it's Awaken Zen Spa! Here's your booking link:\n\n${BOOKING_URL}\n\nSee you soon ✨`
     });
-    res.json({ result: "Booking link sent successfully." });
+    res.json({ result: "Booking link sent." });
   } catch (err) {
-    console.error("sendBookingLink error:", err);
     res.status(500).json({ result: "Failed to send booking link." });
   }
 });
 
-// ── Route: Send Gift Card Link via SMS ───────────────────────────────────────
+// ── Route: Send Gift Card Link ────────────────────────────────────────────────
 app.post("/send-gift-card-link", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
-      to:   phoneNumber,
-      body: `Hi, it's Awaken Zen Spa! Here's the link to purchase a gift card:\n\n${GIFT_CARD_URL}\n\nA beautiful gift for someone special ✨`
+      to: phoneNumber,
+      body: `Hi, it's Awaken Zen Spa! Gift cards available here:\n\n${GIFT_CARD_URL}\n\nA beautiful gift ✨`
     });
-    res.json({ result: "Gift card link sent successfully." });
+    res.json({ result: "Gift card link sent." });
   } catch (err) {
-    console.error("sendGiftCardLink error:", err);
     res.status(500).json({ result: "Failed to send gift card link." });
+  }
+});
+
+// ── Route: Check Availability ─────────────────────────────────────────────────
+// Called by Kai when client asks about available times
+app.post("/check-availability", async (req, res) => {
+  try {
+    const { serviceKey, duration, date } = req.body;
+
+    // Resolve service
+    const svcKey = (serviceKey || "").toLowerCase();
+    const service = SERVICES[svcKey];
+    if (!service) {
+      return res.json({ result: `I wasn't able to find that service. Could you clarify which service you're interested in?` });
+    }
+
+    // Resolve duration
+    const dur = String(duration || "60");
+    const variationId = service.variations[dur];
+    if (!variationId) {
+      const available = Object.keys(service.variations).join(", ");
+      return res.json({ result: `${service.label} is available in ${available} minute sessions.` });
+    }
+
+    // Resolve date
+    const resolved = resolveDate(date || "tomorrow");
+    if (!resolved) {
+      return res.json({ result: "I couldn't determine that date — could you clarify?" });
+    }
+    const dateStr = formatDateForSquare(resolved);
+
+    // Query Square Bookings API for availability
+    const data = await squareRequest("POST", "/bookings/availability/search", {
+      query: {
+        filter: {
+          start_at_range: {
+            start_at: `${dateStr}T08:00:00-07:00`,
+            end_at:   `${dateStr}T19:00:00-07:00`
+          },
+          location_id: LOCATION_ID,
+          segment_filters: [
+            {
+              service_variation_id: variationId,
+              team_member_id_filter: {
+                any: Object.values(TEAM_MEMBERS).map(m => m.id)
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    const slots = data.availabilities || [];
+    if (slots.length === 0) {
+      return res.json({
+        result: `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`
+      });
+    }
+
+    // Get unique times (deduplicate same time across team members)
+    const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
+    const timeList = uniqueTimes.join(", ");
+
+    res.json({
+      result: `For ${service.label} (${dur} min) on ${resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}, we have availability at: ${timeList}. Which time works best for you?`,
+      slots: slots.slice(0, 6)
+    });
+
+  } catch (err) {
+    console.error("check-availability error:", err);
+    res.status(500).json({ result: "I had trouble checking availability — please try our booking page at awakenzenspa.com/booking." });
+  }
+});
+
+// ── Route: Book Appointment ───────────────────────────────────────────────────
+app.post("/book-appointment", async (req, res) => {
+  try {
+    const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = req.body;
+
+    const svcKey = (serviceKey || "").toLowerCase();
+    const service = SERVICES[svcKey];
+    if (!service) return res.json({ result: "Service not found." });
+
+    const dur = String(duration || "60");
+    const variationId = service.variations[dur];
+    if (!variationId) return res.json({ result: "Duration not available for this service." });
+
+    // Create or find customer
+    let customerId = null;
+    if (customerPhone || customerEmail) {
+      const searchRes = await squareRequest("POST", "/customers/search", {
+        query: {
+          filter: {
+            phone_number: { exact: customerPhone }
+          }
+        }
+      });
+      if (searchRes.customers && searchRes.customers.length > 0) {
+        customerId = searchRes.customers[0].id;
+      } else {
+        const createRes = await squareRequest("POST", "/customers", {
+          given_name: customerName?.split(" ")[0] || "Guest",
+          family_name: customerName?.split(" ").slice(1).join(" ") || "",
+          phone_number: customerPhone,
+          email_address: customerEmail
+        });
+        customerId = createRes.customer?.id;
+      }
+    }
+
+    // Create booking
+    const bookingRes = await squareRequest("POST", "/bookings", {
+      booking: {
+        location_id: LOCATION_ID,
+        start_at: startAt,
+        customer_id: customerId,
+        customer_note: `Booked via Kai AI phone concierge. Card on file required per cancellation policy.`,
+        appointment_segments: [
+          {
+            service_variation_id: variationId,
+            service_variation_version: 0,
+            duration_minutes: parseInt(dur),
+            team_member_id: TEAM_MEMBERS.brant.id
+          }
+        ]
+      },
+      idempotency_key: `kai-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
+    });
+
+    if (bookingRes.errors) {
+      console.error("Booking error:", bookingRes.errors);
+      return res.json({
+        result: `I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.`
+      });
+    }
+
+    const booking = bookingRes.booking;
+    const displayTime = formatTimeForDisplay(booking.start_at);
+    const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
+      timeZone: "America/Phoenix",
+      weekday: "long",
+      month: "long",
+      day: "numeric"
+    });
+
+    // Send confirmation SMS with card-on-file link
+    if (customerPhone) {
+      await twilioClient.messages.create({
+        from: TWILIO_NUMBER,
+        to: customerPhone,
+        body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
+              `📅 ${service.label}\n` +
+              `🕐 ${displayDate} at ${displayTime}\n` +
+              `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
+              `To complete your booking, please add a card on file for our 24-hour cancellation policy ($25 no-show fee):\n\n` +
+              `${BOOKING_URL}\n\n` +
+              `Questions? Call or text (602) 688-2578. See you soon ✨`
+      });
+    }
+
+    res.json({
+      result: `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your appointment details and a link to add a card on file for our cancellation policy. We look forward to seeing you at Awaken Zen Spa!`,
+      booking_id: booking.id
+    });
+
+  } catch (err) {
+    console.error("book-appointment error:", err);
+    res.status(500).json({ result: "I had trouble completing that booking. Let me send you our booking link instead." });
+  }
+});
+
+// ── Route: Send booking confirmation SMS manually ─────────────────────────────
+app.post("/send-booking-confirmation", async (req, res) => {
+  try {
+    const { phoneNumber, appointmentDetails } = req.body;
+    await twilioClient.messages.create({
+      from: TWILIO_NUMBER,
+      to: phoneNumber,
+      body: `Hi! Your Awaken Zen Spa appointment is confirmed.\n\n${appointmentDetails}\n\nPlease add a card on file:\n${BOOKING_URL}\n\nQuestions? (602) 688-2578 ✨`
+    });
+    res.json({ result: "Confirmation sent." });
+  } catch (err) {
+    res.status(500).json({ result: "Failed to send confirmation." });
+  }
+});
+
+// ── Route: Square diagnostic (can remove after setup) ────────────────────────
+app.get("/square-info", async (req, res) => {
+  try {
+    const teamRes = await squareRequest("POST", "/team-members/search", {
+      query: { filter: { location_ids: [LOCATION_ID], status: "ACTIVE" } }
+    });
+    res.json({ team: teamRes.team_members?.map(m => ({ name: `${m.given_name} ${m.family_name}`, id: m.id })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -121,80 +528,4 @@ app.post("/send-gift-card-link", async (req, res) => {
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
 const PORT = process.env.PORT || 3000;
-// ─────────────────────────────────────────────────────────────────────────────
-// ADD THIS TO THE BOTTOM OF YOUR index.js (before the app.listen line)
-// Then commit to GitHub — Railway will redeploy automatically
-// Visit: https://nodejs-production-2820.up.railway.app/square-info
-// ─────────────────────────────────────────────────────────────────────────────
-
-app.get("/square-info", async (req, res) => {
-  const token = process.env.SQUARE_ACCESS_TOKEN;
-  const locationId = "TMRQ3D20EFD1X";
-
-  try {
-    // 1. Get all catalog items (services)
-    const catalogRes = await fetch("https://connect.squareup.com/v2/catalog/list?types=ITEM", {
-      headers: {
-        "Square-Version": "2024-01-18",
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
-    });
-    const catalogData = await catalogRes.json();
-
-    // 2. Get all team members
-    const teamRes = await fetch("https://connect.squareup.com/v2/team-members/search", {
-      method: "POST",
-      headers: {
-        "Square-Version": "2024-01-18",
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        query: {
-          filter: {
-            location_ids: [locationId],
-            status: "ACTIVE"
-          }
-        }
-      })
-    });
-    const teamData = await teamRes.json();
-
-    // 3. Format services cleanly
-    const services = (catalogData.objects || [])
-      .filter(obj => obj.type === "ITEM")
-      .map(item => ({
-        name: item.item_data?.name,
-        id: item.id,
-        variations: (item.item_data?.variations || []).map(v => ({
-          name: v.item_variation_data?.name,
-          id: v.id,
-          duration_minutes: v.item_variation_data?.service_duration
-            ? v.item_variation_data.service_duration / 60000
-            : null,
-          price: v.item_variation_data?.price_money
-            ? `$${v.item_variation_data.price_money.amount / 100}`
-            : null
-        }))
-      }));
-
-    // 4. Format team members cleanly
-    const team = (teamData.team_members || []).map(m => ({
-      name: `${m.given_name} ${m.family_name}`,
-      id: m.id,
-      status: m.status
-    }));
-
-    res.json({
-      location_id: locationId,
-      services_count: services.length,
-      services,
-      team_members: team
-    });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
