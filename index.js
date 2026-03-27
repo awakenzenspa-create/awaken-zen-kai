@@ -121,4 +121,80 @@ app.post("/send-gift-card-link", async (req, res) => {
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
 const PORT = process.env.PORT || 3000;
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THIS TO THE BOTTOM OF YOUR index.js (before the app.listen line)
+// Then commit to GitHub — Railway will redeploy automatically
+// Visit: https://nodejs-production-2820.up.railway.app/square-info
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get("/square-info", async (req, res) => {
+  const token = process.env.SQUARE_ACCESS_TOKEN;
+  const locationId = "TMRQ3D20EFD1X";
+
+  try {
+    // 1. Get all catalog items (services)
+    const catalogRes = await fetch("https://connect.squareup.com/v2/catalog/list?types=ITEM", {
+      headers: {
+        "Square-Version": "2024-01-18",
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+    const catalogData = await catalogRes.json();
+
+    // 2. Get all team members
+    const teamRes = await fetch("https://connect.squareup.com/v2/team-members/search", {
+      method: "POST",
+      headers: {
+        "Square-Version": "2024-01-18",
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        query: {
+          filter: {
+            location_ids: [locationId],
+            status: "ACTIVE"
+          }
+        }
+      })
+    });
+    const teamData = await teamRes.json();
+
+    // 3. Format services cleanly
+    const services = (catalogData.objects || [])
+      .filter(obj => obj.type === "ITEM")
+      .map(item => ({
+        name: item.item_data?.name,
+        id: item.id,
+        variations: (item.item_data?.variations || []).map(v => ({
+          name: v.item_variation_data?.name,
+          id: v.id,
+          duration_minutes: v.item_variation_data?.service_duration
+            ? v.item_variation_data.service_duration / 60000
+            : null,
+          price: v.item_variation_data?.price_money
+            ? `$${v.item_variation_data.price_money.amount / 100}`
+            : null
+        }))
+      }));
+
+    // 4. Format team members cleanly
+    const team = (teamData.team_members || []).map(m => ({
+      name: `${m.given_name} ${m.family_name}`,
+      id: m.id,
+      status: m.status
+    }));
+
+    res.json({
+      location_id: locationId,
+      services_count: services.length,
+      services,
+      team_members: team
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
