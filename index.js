@@ -618,6 +618,393 @@ app.get("/square-info", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SMS AI SYSTEM — Kai text concierge
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Conversation memory (in-memory, persists for session duration) ────────────
+const smsConversations = new Map(); // phone -> [{ role, content }]
+const SMS_MAX_HISTORY = 20; // keep last 20 messages per client
+
+function getConversation(phone) {
+  if (!smsConversations.has(phone)) {
+    smsConversations.set(phone, []);
+  }
+  return smsConversations.get(phone);
+}
+
+function addToConversation(phone, role, content) {
+  const convo = getConversation(phone);
+  convo.push({ role, content });
+  // Keep last N messages
+  if (convo.length > SMS_MAX_HISTORY) {
+    convo.splice(0, convo.length - SMS_MAX_HISTORY);
+  }
+}
+
+// ── Square: Get upcoming bookings for a phone number ─────────────────────────
+async function getUpcomingBookings(phoneNumber) {
+  // Search for customer by phone
+  const customerRes = await squareRequest("POST", "/customers/search", {
+    query: { filter: { phone_number: { exact: phoneNumber } } }
+  });
+
+  if (!customerRes.customers?.length) return [];
+
+  const customerId = customerRes.customers[0].id;
+
+  // Get upcoming bookings
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  const bookingsRes = await squareRequest("POST", "/bookings/search", {
+    query: {
+      filter: {
+        location_id: LOCATION_ID,
+        customer_id_filter: { customer_ids: [customerId] },
+        start_at_range: { start_at: now, end_at: future }
+      }
+    }
+  });
+
+  return bookingsRes.bookings || [];
+}
+
+// ── Square: Cancel a booking ──────────────────────────────────────────────────
+async function cancelBooking(bookingId, version) {
+  return squareRequest("POST", `/bookings/${bookingId}/cancel`, {
+    booking_version: version,
+    idempotency_key: `cancel-${bookingId}-${Date.now()}`
+  });
+}
+
+// ── Format booking for display ────────────────────────────────────────────────
+function formatBookingForDisplay(booking) {
+  const dt = new Date(booking.start_at);
+  const date = dt.toLocaleDateString("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "long", month: "long", day: "numeric"
+  });
+  const time = dt.toLocaleTimeString("en-US", {
+    timeZone: "America/Phoenix",
+    hour: "numeric", minute: "2-digit", hour12: true
+  });
+  const service = booking.appointment_segments?.[0]?.service_variation_id || "Service";
+  return `${date} at ${time}`;
+}
+
+// ── SMS System Prompt ─────────────────────────────────────────────────────────
+function buildSmsSystemPrompt(clientPhone) {
+  const now = new Date();
+  const azDate = now.toLocaleDateString("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "long", year: "numeric", month: "long", day: "numeric"
+  });
+  const azTime = now.toLocaleTimeString("en-US", {
+    timeZone: "America/Phoenix",
+    hour: "numeric", minute: "2-digit", hour12: true
+  });
+
+  // Check if within 24 hours of any upcoming booking (for cancellation warning)
+  return `You are Kai, the front desk concierge at Awaken Zen Spa in Mesa, Arizona. You are responding via SMS/text message. Keep responses warm, concise, and conversational — this is a text exchange, not a phone call. Use short paragraphs. Never use markdown formatting like ** or ##.
+
+Today is ${azDate}. Current time is ${azTime} Arizona time.
+
+The client's phone number is ${clientPhone}. You can use this to look up their appointments.
+
+BUSINESS DETAILS:
+Awaken Zen Spa — 2830 E Brown Rd Suite 10, Mesa AZ 85213
+Hours: Daily 8AM-8PM, by appointment only
+Phone: (602) 688-2578
+Booking: ${BOOKING_URL}
+
+CANCELLATION POLICY:
+24 hours notice required. Less than 24 hours = $25 fee. Always mention this when someone wants to cancel.
+
+WHAT YOU CAN DO OVER TEXT:
+1. Answer questions about services, pricing, hours, location
+2. Check availability and quote open times
+3. Help reschedule or cancel appointments
+4. Send booking link for new appointments
+5. Look up their upcoming appointments
+
+RESCHEDULING FLOW:
+When someone wants to reschedule:
+1. First acknowledge warmly
+2. Ask what service and what new day/time works for them
+3. Check availability for that service/day using [CHECK_AVAILABILITY: service|duration|date]
+4. Once they pick a time, confirm cancellation of old appointment and booking of new one
+5. Use [CANCEL_BOOKING: bookingId|version] to cancel old
+6. Use [BOOK_APPOINTMENT: service|duration|isoDateTime|name|phone] to book new
+7. Send confirmation
+
+CANCELLATION FLOW:
+When someone wants to cancel:
+1. Look up their booking using [GET_BOOKINGS]
+2. Confirm which appointment they mean
+3. Warn about 24-hour policy if applicable
+4. Ask them to confirm: "Just to confirm — you'd like to cancel your [service] on [date]?"
+5. After confirmation, use [CANCEL_BOOKING: bookingId|version]
+6. Confirm cancellation and express hope to see them soon
+
+ACTION COMMANDS (use these in your response when needed):
+[GET_BOOKINGS] — look up client's upcoming appointments
+[CHECK_AVAILABILITY: serviceKey|duration|date] — check open slots
+[BOOK_APPOINTMENT: serviceKey|duration|isoDateTime|customerName|customerPhone] — create booking
+[CANCEL_BOOKING: bookingId|version] — cancel a booking
+[SEND_BOOKING_LINK] — send the booking link via text
+
+SERVICES (common ones):
+swedish/european royalty: 60/90/120 min — $85/$115/$145
+deep tissue/muscle mender: 60/90/120 min — $85/$115/$145
+lymphatic/spring senses: 60/90/120 min — $85/$115/$145
+ashiatsu/sole symphony: 60/90/120 min — $85/$115/$145
+hot stone/warm stone: 90/120 min — $130/$170
+calm and clear facial: 60/90 min — $85/$115
+anti aging/youthful glow facial: 60/90 min — $85/$115
+microdermabrasion: 60/90 min — $95/$125
+dermaplane: 60/90 min — $100/$130
+microneedling: 60 min — $130
+
+TONE:
+- Warm and personal, like a trusted front desk person
+- Brief — this is text, not email
+- Never say "No problem" — say "Of course" or "Absolutely"
+- Sign off warmly on first message: "— Kai at Awaken Zen"`;
+}
+
+// ── Process AI action commands from Claude's response ─────────────────────────
+async function processActions(responseText, clientPhone, clientName) {
+  let finalText = responseText;
+  const actions = [];
+
+  // Extract all action commands
+  const actionRegex = /\[([A-Z_]+)(?::([^\]]+))?\]/g;
+  let match;
+  while ((match = actionRegex.exec(responseText)) !== null) {
+    actions.push({ full: match[0], name: match[1], args: match[2]?.split("|") || [] });
+  }
+
+  for (const action of actions) {
+    try {
+      let result = "";
+
+      if (action.name === "GET_BOOKINGS") {
+        const bookings = await getUpcomingBookings(clientPhone);
+        if (bookings.length === 0) {
+          result = "No upcoming appointments found for this number.";
+        } else {
+          result = bookings.map((b, i) =>
+            `${i + 1}. ${formatBookingForDisplay(b)} (ID: ${b.id}, v${b.version})`
+          ).join("\n");
+        }
+        // Replace action with result context for Claude to use
+        finalText = finalText.replace(action.full, `[Bookings found: ${result}]`);
+      }
+
+      else if (action.name === "CHECK_AVAILABILITY") {
+        const [svcKey, dur, date] = action.args;
+        const service = SERVICES[(svcKey || "").toLowerCase().trim()];
+        if (service) {
+          const variationId = service.variations[dur || "60"];
+          if (variationId) {
+            const resolved = resolveDate(date || "tomorrow");
+            if (resolved) {
+              const dateStr = formatDateForSquare(resolved);
+              const data = await squareRequest("POST", "/bookings/availability/search", {
+                query: {
+                  filter: {
+                    start_at_range: {
+                      start_at: `${dateStr}T08:00:00-07:00`,
+                      end_at:   `${dateStr}T19:00:00-07:00`
+                    },
+                    location_id: LOCATION_ID,
+                    segment_filters: [{
+                      service_variation_id: variationId,
+                      team_member_id_filter: { any: Object.values(TEAM_MEMBERS).map(m => m.id) }
+                    }]
+                  }
+                }
+              });
+              const slots = data.availabilities || [];
+              const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
+              result = slots.length === 0
+                ? "No availability on that day."
+                : `Available: ${uniqueTimes.join(", ")}. Slots: ${JSON.stringify(slots.slice(0, 6).map(s => s.start_at))}`;
+            }
+          }
+        }
+        finalText = finalText.replace(action.full, `[Availability: ${result}]`);
+      }
+
+      else if (action.name === "CANCEL_BOOKING") {
+        const [bookingId, version] = action.args;
+        const cancelRes = await cancelBooking(bookingId, parseInt(version) || 0);
+        if (cancelRes.errors) {
+          result = `Error: ${cancelRes.errors[0]?.detail || "Could not cancel"}`;
+        } else {
+          result = "Booking cancelled successfully.";
+          // Notify owner
+          await twilioClient.messages.create({
+            from: TWILIO_NUMBER,
+            to: OWNER_CELL,
+            body: `📋 AZS: Kai cancelled booking ${bookingId} for ${clientPhone} via SMS.`
+          });
+        }
+        finalText = finalText.replace(action.full, `[Cancel result: ${result}]`);
+      }
+
+      else if (action.name === "BOOK_APPOINTMENT") {
+        const [svcKey, dur, isoDateTime, name, phone] = action.args;
+        const service = SERVICES[(svcKey || "").toLowerCase().trim()];
+        if (service) {
+          const variationId = service.variations[dur || "60"];
+          if (variationId) {
+            // Find/create customer
+            let customerId = null;
+            const searchRes = await squareRequest("POST", "/customers/search", {
+              query: { filter: { phone_number: { exact: phone || clientPhone } } }
+            });
+            customerId = searchRes.customers?.[0]?.id;
+            if (!customerId) {
+              const createRes = await squareRequest("POST", "/customers", {
+                given_name: (name || "Guest").split(" ")[0],
+                family_name: (name || "").split(" ").slice(1).join(" "),
+                phone_number: phone || clientPhone
+              });
+              customerId = createRes.customer?.id;
+            }
+
+            const bookingRes = await squareRequest("POST", "/bookings", {
+              booking: {
+                location_id: LOCATION_ID,
+                start_at: isoDateTime,
+                customer_id: customerId,
+                customer_note: "Booked via Kai SMS concierge.",
+                appointment_segments: [{
+                  service_variation_id: variationId,
+                  service_variation_version: 0,
+                  duration_minutes: parseInt(dur || "60"),
+                  team_member_id: TEAM_MEMBERS.brant.id
+                }]
+              },
+              idempotency_key: `sms-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
+            });
+
+            if (bookingRes.errors) {
+              result = `Error: ${bookingRes.errors[0]?.detail || "Could not book"}`;
+            } else {
+              const booking = bookingRes.booking;
+              const displayTime = formatTimeForDisplay(booking.start_at);
+              const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
+                timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
+              });
+              result = `Booked! ${service.label} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
+            }
+          }
+        }
+        finalText = finalText.replace(action.full, `[Booking result: ${result}]`);
+      }
+
+      else if (action.name === "SEND_BOOKING_LINK") {
+        await twilioClient.messages.create({
+          from: TWILIO_NUMBER,
+          to: clientPhone,
+          body: `Here's the Awaken Zen Spa booking link:\n${BOOKING_URL}`
+        });
+        finalText = finalText.replace(action.full, "[Booking link sent]");
+      }
+
+    } catch (err) {
+      console.error(`SMS action ${action.name} error:`, err.message);
+      finalText = finalText.replace(action.full, `[Action failed: ${err.message}]`);
+    }
+  }
+
+  return finalText;
+}
+
+// ── Call Claude API for SMS response ─────────────────────────────────────────
+async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
+  const history = getConversation(clientPhone);
+
+  // Build messages array
+  const messages = [
+    ...history,
+    { role: "user", content: userMessage }
+  ];
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 500,
+      system: buildSmsSystemPrompt(clientPhone),
+      messages
+    })
+  });
+
+  const data = await response.json();
+  return data.content?.[0]?.text || "I'm sorry, I had trouble with that. Please call us at (602) 688-2578.";
+}
+
+// ── Route: Incoming SMS ───────────────────────────────────────────────────────
+app.post("/incoming-sms", async (req, res) => {
+  const twiml = new twilio.twiml.MessagingResponse();
+
+  try {
+    const incomingMsg = req.body.Body?.trim();
+    const clientPhone = req.body.From;
+    const clientName  = req.body.FromCity || "";
+
+    if (!incomingMsg || !clientPhone) {
+      twiml.message("Hi! You've reached Awaken Zen Spa. How can Kai help you today?");
+      return res.type("text/xml").send(twiml.toString());
+    }
+
+    console.log(`SMS from ${clientPhone}: ${incomingMsg}`);
+
+    // Add user message to history
+    addToConversation(clientPhone, "user", incomingMsg);
+
+    // Get Claude's response
+    let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName);
+
+    // Process any action commands in the response
+    aiResponse = await processActions(aiResponse, clientPhone, clientName);
+
+    // If response still has action placeholders, run Claude one more time with results
+    if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
+        aiResponse.includes("[Cancel result:") || aiResponse.includes("[Booking result:")) {
+
+      addToConversation(clientPhone, "assistant", aiResponse);
+      addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client without showing the raw action output.");
+
+      let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, give the client a natural, warm response.", clientName);
+      finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
+
+      addToConversation(clientPhone, "assistant", finalResponse);
+      twiml.message(finalResponse);
+    } else {
+      // Clean response of any leftover action syntax
+      const cleanResponse = aiResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
+      addToConversation(clientPhone, "assistant", cleanResponse);
+      twiml.message(cleanResponse);
+    }
+
+  } catch (err) {
+    console.error("SMS error:", err);
+    twiml.message("Hi! This is Awaken Zen Spa. We're having a moment — please call us at (602) 688-2578 or visit awakenzenspa.com/booking. Sorry for the inconvenience!");
+  }
+
+  res.type("text/xml").send(twiml.toString());
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
