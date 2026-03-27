@@ -512,6 +512,57 @@ app.post("/send-booking-confirmation", async (req, res) => {
   }
 });
 
+// ── Route: Vapi Server Message — injects current date/time at call start ──────
+// In Vapi: Assistant → Advanced → Server Messages → enable "assistant-request"
+// Server URL: https://nodejs-production-2820.up.railway.app/vapi-message
+app.post("/vapi-message", (req, res) => {
+  const msg = req.body?.message;
+
+  // Fires at the start of every call — inject current Arizona date into system prompt
+  if (msg?.type === "assistant-request") {
+    const now = new Date();
+    const azOptions = { timeZone: "America/Phoenix" };
+    const azDate = now.toLocaleDateString("en-US", {
+      ...azOptions,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+    const azTime = now.toLocaleTimeString("en-US", {
+      ...azOptions,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true
+    });
+
+    return res.json({
+      assistant: {
+        firstMessage: `Thank you for calling Awaken Zen Spa, this is Kai — how can I take care of you today?`,
+        model: {
+          messages: [
+            {
+              role: "system",
+              content: `CURRENT DATE AND TIME (Arizona / America/Phoenix timezone, UTC-7, no DST):
+Today is ${azDate}.
+Current time is ${azTime}.
+
+Use this to resolve any relative date the caller mentions:
+- "tomorrow" = the day after ${azDate}
+- "next [weekday]" = the upcoming occurrence of that weekday after today
+- "this [weekday]" = the nearest upcoming occurrence
+- Never ask the caller what day it is. You always know.`
+            }
+          ]
+        }
+      }
+    });
+  }
+
+  // For all other message types just acknowledge
+  res.json({});
+});
+
 // ── Route: Square diagnostic (can remove after setup) ────────────────────────
 app.get("/square-info", async (req, res) => {
   try {
