@@ -1125,6 +1125,22 @@ app.post("/flash-fill/sync-members", async (req, res) => {
   }
 });
 
+// Manual trigger — import all Square customers into clients table
+app.post("/flash-fill/import-customers", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const { runSquareCustomerImport } = require("./jobs/squareCustomerImport.js");
+    const result = await runSquareCustomerImport();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("Customer import error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
 // ─────────────────────────────────────────────────────────────────────────────
