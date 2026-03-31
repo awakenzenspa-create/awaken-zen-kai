@@ -1,5 +1,3 @@
-//v2
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
 // Full build: time routing, SMS tools, Square availability + booking
@@ -1361,25 +1359,21 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
     (clientRows || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
     log.info(`Loaded ${Object.keys(clientMap).length} clients for matching`);
 
-    // Fetch all bookings from Square (paginated)
+    // Fetch all bookings from Square using GET /v2/bookings (paginated)
     const bookings = [];
     let cursor = null;
     do {
-      const body = {
-        limit: 100,
-        query: {
-          filter: {
-            location_id: LOCATION_ID,
-            start_at_range: { start_at: startDate, end_at: endDate }
-          }
-        }
-      };
-      if (cursor) body.cursor = cursor;
+      const params = new URLSearchParams({
+        limit: "100",
+        location_id: LOCATION_ID,
+        start_at_min: startDate,
+        start_at_max: endDate
+      });
+      if (cursor) params.set("cursor", cursor);
 
-      const sqRes = await fetch(`${SQUARE_BASE}/bookings/search`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION, "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+      const sqRes = await fetch(`${SQUARE_BASE}/bookings?${params}`, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION }
       });
       if (!sqRes.ok) throw new Error(`Square bookings API ${sqRes.status}: ${await sqRes.text()}`);
       const data = await sqRes.json();
