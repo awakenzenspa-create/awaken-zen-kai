@@ -69,11 +69,12 @@ async function fetchAllSquareCustomers(log) {
   let cursor = null;
 
   do {
-    const url = cursor
-      ? `${SQUARE_BASE}/customers?limit=100&cursor=${cursor}`
-      : `${SQUARE_BASE}/customers?limit=100&sort_field=CREATED_AT&sort_order=ASC`;
+    // Use GET with only cursor + limit — no other params when paginating
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
 
-    const res = await fetch(url, {
+    const res = await fetch(`${SQUARE_BASE}/customers?${params}`, {
+      method: "GET",
       headers: {
         "Authorization": `Bearer ${SQUARE_TOKEN}`,
         "Square-Version": SQUARE_VERSION,
