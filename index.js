@@ -7,6 +7,7 @@
 const express = require("express");
 const twilio  = require("twilio");
 const { createClient } = require("@supabase/supabase-js");
+const { runSquareCustomerImport } = require("./jobs/squareCustomerImport.js");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -1132,7 +1133,6 @@ app.post("/flash-fill/import-customers", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
-    const { runSquareCustomerImport } = require("./jobs/squareCustomerImport.js");
     const result = await runSquareCustomerImport();
     res.json({ success: true, ...result });
   } catch (err) {
