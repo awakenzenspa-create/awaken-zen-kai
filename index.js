@@ -1359,28 +1359,37 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
     (clientRows || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
     log.info(`Loaded ${Object.keys(clientMap).length} clients for matching`);
 
-    // Fetch all bookings from Square using GET /v2/bookings (paginated)
+    // Fetch all bookings from Square in 31-day chunks (API limit)
     const bookings = [];
-    let cursor = null;
-    do {
-      const params = new URLSearchParams({
-        limit: "100",
-        location_id: LOCATION_ID,
-        start_at_min: startDate,
-        start_at_max: endDate
-      });
-      if (cursor) params.set("cursor", cursor);
+    const chunkMs = 30 * 24 * 3600000; // 30 days per chunk
+    let chunkStart = new Date(startDate);
+    const rangeEnd  = new Date(endDate);
 
-      const sqRes = await fetch(`${SQUARE_BASE}/bookings?${params}`, {
-        method: "GET",
-        headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION }
-      });
-      if (!sqRes.ok) throw new Error(`Square bookings API ${sqRes.status}: ${await sqRes.text()}`);
-      const data = await sqRes.json();
-      (data.bookings || []).forEach(b => bookings.push(b));
-      cursor = data.cursor || null;
-      log.info(`  Fetched batch of ${data.bookings?.length || 0} (total: ${bookings.length})`);
-    } while (cursor);
+    while (chunkStart < rangeEnd) {
+      const chunkEnd = new Date(Math.min(chunkStart.getTime() + chunkMs, rangeEnd.getTime()));
+      let cursor = null;
+      do {
+        const params = new URLSearchParams({
+          limit: "100",
+          location_id: LOCATION_ID,
+          start_at_min: chunkStart.toISOString(),
+          start_at_max: chunkEnd.toISOString()
+        });
+        if (cursor) params.set("cursor", cursor);
+
+        const sqRes = await fetch(`${SQUARE_BASE}/bookings?${params}`, {
+          method: "GET",
+          headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION }
+        });
+        if (!sqRes.ok) throw new Error(`Square bookings API ${sqRes.status}: ${await sqRes.text()}`);
+        const data = await sqRes.json();
+        (data.bookings || []).forEach(b => bookings.push(b));
+        cursor = data.cursor || null;
+        log.info(`  Chunk ${chunkStart.toISOString().slice(0,10)}→${chunkEnd.toISOString().slice(0,10)}: ${data.bookings?.length || 0} bookings (total: ${bookings.length})`);
+      } while (cursor);
+
+      chunkStart = chunkEnd;
+    }
 
     log.info(`Fetched ${bookings.length} bookings from Square`);
 
