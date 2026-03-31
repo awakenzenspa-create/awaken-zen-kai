@@ -7,7 +7,6 @@
 const express = require("express");
 const twilio  = require("twilio");
 const { createClient } = require("@supabase/supabase-js");
-const { runSquareCustomerImport } = require("./jobs/squareCustomerImport.js");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -1133,8 +1132,61 @@ app.post("/flash-fill/import-customers", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
-    const result = await runSquareCustomerImport();
-    res.json({ success: true, ...result });
+    const log = makeSyncLogger();
+    log.info("=== Square Customer Import Started ===");
+
+    // Fetch all customers from Square (paginated via POST search)
+    const customers = [];
+    let cursor = null;
+    do {
+      const body = { limit: 100 };
+      if (cursor) body.cursor = cursor;
+      const sqRes = await fetch(`${SQUARE_BASE}/customers/search`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!sqRes.ok) throw new Error(`Square API ${sqRes.status}: ${await sqRes.text()}`);
+      const data = await sqRes.json();
+      (data.customers || []).forEach(c => customers.push(c));
+      cursor = data.cursor || null;
+      log.info(`  Fetched batch of ${data.customers?.length || 0} (total: ${customers.length})`);
+    } while (cursor);
+
+    // Get existing square_customer_ids
+    const { data: existing } = await supabase.from("clients").select("square_customer_id").not("square_customer_id", "is", null);
+    const existingIds = new Set((existing || []).map(c => c.square_customer_id));
+    log.info(`${existingIds.size} already in Supabase, ${customers.length - existingIds.size} new`);
+
+    // Map and insert new customers in chunks
+    const newCustomers = customers.filter(c => !existingIds.has(c.id));
+    const rows = newCustomers.map(c => {
+      if (!c.given_name && !c.company_name) return null;
+      const rawPhone = c.phone_number || null;
+      const digits = rawPhone ? rawPhone.replace(/\D/g, "") : null;
+      const phone = digits ? (digits.length === 10 ? `+1${digits}` : digits.length === 11 ? `+${digits}` : rawPhone) : null;
+      return {
+        square_customer_id: c.id,
+        first_name: (c.given_name || c.company_name || "").trim(),
+        last_name: (c.family_name || "").trim() || null,
+        email: c.email_address?.trim()?.toLowerCase() || null,
+        phone,
+        therapist_notes: c.note?.trim() || null,
+        created_at: c.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+    }).filter(Boolean);
+
+    let imported = 0;
+    for (let i = 0; i < rows.length; i += 100) {
+      const chunk = rows.slice(i, i + 100);
+      const { error } = await supabase.from("clients").insert(chunk, { returning: "minimal" });
+      if (error) log.warn(`Chunk error: ${error.message}`);
+      else imported += chunk.length;
+    }
+
+    log.info(`Import complete: ${imported} imported, ${existingIds.size} skipped`);
+    res.json({ success: true, imported, skipped: existingIds.size, total: customers.length, log: log.entries });
   } catch (err) {
     console.error("Customer import error:", err.message);
     res.status(500).json({ success: false, error: err.message });
