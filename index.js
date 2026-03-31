@@ -1265,7 +1265,7 @@ async function loadClientsWithStats(log) {
   if (ce) throw new Error(`Could not load clients: ${ce.message}`);
 
   const { data: appts, error: ae } = await supabase
-    .from("appointments").select("client_id, starts_at, status, price_usd")
+    .from("square_appointments_cache").select("client_id, square_customer_id, starts_at, status")
     .eq("status", "completed").not("client_id", "is", null);
   if (ae) throw new Error(`Could not load appointments: ${ae.message}`);
 
@@ -1332,6 +1332,103 @@ function makeGroupLogger() {
     error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
   };
 }
+
+// Sync Square bookings → square_appointments_cache
+app.post("/flash-fill/sync-appointments", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const log = makeSyncLogger();
+    const fullSync = req.query.full === "true"; // ?full=true for historical backfill
+    log.info(`Square appointments sync started (${fullSync ? "full 12-month" : "incremental"} mode)`);
+
+    // Date range: full = last 12 months, incremental = last 7 days
+    const now = new Date();
+    const startDate = fullSync
+      ? new Date(now - 365 * 24 * 3600000).toISOString()
+      : new Date(now - 7   * 24 * 3600000).toISOString();
+    const endDate = new Date(now + 24 * 3600000).toISOString(); // +1 day buffer
+
+    // Build client lookup map: square_customer_id → client UUID
+    const { data: clientRows } = await supabase
+      .from("clients").select("id, square_customer_id")
+      .not("square_customer_id", "is", null);
+    const clientMap = {};
+    (clientRows || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
+    log.info(`Loaded ${Object.keys(clientMap).length} clients for matching`);
+
+    // Fetch all bookings from Square (paginated)
+    const bookings = [];
+    let cursor = null;
+    do {
+      const body = {
+        limit: 100,
+        query: {
+          filter: {
+            location_id: LOCATION_ID,
+            start_at_range: { start_at: startDate, end_at: endDate }
+          }
+        }
+      };
+      if (cursor) body.cursor = cursor;
+
+      const sqRes = await fetch(`${SQUARE_BASE}/bookings/search`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!sqRes.ok) throw new Error(`Square bookings API ${sqRes.status}: ${await sqRes.text()}`);
+      const data = await sqRes.json();
+      (data.bookings || []).forEach(b => bookings.push(b));
+      cursor = data.cursor || null;
+      log.info(`  Fetched batch of ${data.bookings?.length || 0} (total: ${bookings.length})`);
+    } while (cursor);
+
+    log.info(`Fetched ${bookings.length} bookings from Square`);
+
+    // Map to cache rows — only keep completed/cancelled/no_show
+    const rows = bookings
+      .filter(b => ["COMPLETED", "CANCELLED", "NO_SHOW", "CANCELLED_BY_SELLER", "CANCELLED_BY_BUYER"].includes(b.status))
+      .map(b => {
+        const seg = b.appointment_segments?.[0] || {};
+        const normalizedStatus = b.status.startsWith("CANCELLED") ? "cancelled"
+          : b.status === "NO_SHOW" ? "no_show" : "completed";
+        return {
+          square_booking_id:  b.id,
+          square_customer_id: b.customer_id || null,
+          client_id:          b.customer_id ? (clientMap[b.customer_id] || null) : null,
+          starts_at:          b.start_at,
+          status:             normalizedStatus,
+          price_usd:          null, // Square bookings don't include price — use service catalog if needed
+          service_name:       seg.service_variation_id || null,
+          duration_minutes:   seg.duration_minutes || null,
+          staff_name:         seg.team_member_id || null,
+          synced_at:          new Date().toISOString()
+        };
+      });
+
+    log.info(`${rows.length} bookings to upsert (filtered from ${bookings.length} total)`);
+
+    // Upsert in chunks of 100
+    let synced = 0;
+    for (let i = 0; i < rows.length; i += 100) {
+      const chunk = rows.slice(i, i + 100);
+      const { error } = await supabase
+        .from("square_appointments_cache")
+        .upsert(chunk, { onConflict: "square_booking_id" });
+      if (error) log.warn(`Chunk error: ${error.message}`);
+      else synced += chunk.length;
+    }
+
+    log.info(`Sync complete: ${synced} bookings upserted`);
+    res.json({ success: true, synced, total: bookings.length, log: log.entries });
+  } catch (err) {
+    console.error("Appointments sync error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
