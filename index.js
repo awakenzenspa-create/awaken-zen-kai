@@ -1266,7 +1266,7 @@ async function loadClientsWithStats(log) {
 
   const { data: appts, error: ae } = await supabase
     .from("appointments").select("client_id, starts_at, status, price_usd")
-    .in("status", ["completed", "COMPLETED"]).not("client_id", "is", null);
+    .eq("status", "completed").not("client_id", "is", null);
   if (ae) throw new Error(`Could not load appointments: ${ae.message}`);
 
   const { data: members } = await supabase.from("flash_group_members").select("client_id, opted_in, last_booked_flash_at");
