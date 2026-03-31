@@ -1,10 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
 // Full build: time routing, SMS tools, Square availability + booking
+// Flash Fill: member sync, group management
 // ─────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
 const twilio  = require("twilio");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -14,6 +16,11 @@ const VoiceResponse = twilio.twiml.VoiceResponse;
 const twilioClient  = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
+);
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
@@ -33,7 +40,6 @@ const TEAM_MEMBERS = {
 };
 
 // ── Service Variation IDs for bookable services ───────────────────────────────
-// Format: serviceName -> { "60": variationId, "90": variationId, "120": variationId }
 const SERVICES = {
   "european royalty": {
     label: "European Royalty: Classic Swedish",
@@ -219,8 +225,155 @@ async function squareRequest(method, path, body = null) {
   return res.json();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FLASH FILL — Member Sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function runMemberSync() {
+  const log = makeSyncLogger();
+  log.info("Member sync started");
+
+  try {
+    const subscriptions = await fetchAllSubscriptions(log);
+    log.info(`Fetched ${subscriptions.length} subscriptions from Square`);
+
+    if (subscriptions.length === 0) {
+      log.info("No subscriptions found");
+      return { synced: 0, clientsUpdated: 0, flagsUpdated: 0 };
+    }
+
+    const enriched       = await resolveClientIds(subscriptions, log);
+    const synced         = await upsertMemberSync(enriched, log);
+    const clientsUpdated = await updateClientsTable(enriched, log);
+    const flagsUpdated   = await syncMemberFlags(log);
+
+    log.info(`Done — ${synced} subscriptions | ${clientsUpdated} clients | ${flagsUpdated} flags`);
+    return { synced, clientsUpdated, flagsUpdated, log: log.entries };
+
+  } catch (err) {
+    log.error(`Member sync failed: ${err.message}`);
+    throw err;
+  }
+}
+
+async function fetchAllSubscriptions(log) {
+  const subscriptions = [];
+  let cursor = null;
+  do {
+    const res = await fetch(`${SQUARE_BASE}/subscriptions/search`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${SQUARE_TOKEN}`,
+        "Content-Type": "application/json",
+        "Square-Version": SQUARE_VERSION
+      },
+      body: JSON.stringify({ limit: 100, ...(cursor && { cursor }) })
+    });
+    if (!res.ok) throw new Error(`Square Subscriptions API ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    (data.subscriptions || []).forEach(s => subscriptions.push(s));
+    cursor = data.cursor || null;
+    log.info(`  Batch: ${data.subscriptions?.length || 0} (total: ${subscriptions.length})`);
+  } while (cursor);
+  return subscriptions;
+}
+
+async function resolveClientIds(subscriptions, log) {
+  const squareIds = [...new Set(subscriptions.map(s => s.customer_id).filter(Boolean))];
+  const { data: clients, error } = await supabase
+    .from("clients")
+    .select("id, square_customer_id")
+    .in("square_customer_id", squareIds);
+
+  if (error) {
+    log.warn(`Client lookup failed: ${error.message}`);
+    return subscriptions.map(s => ({ ...s, client_id: null }));
+  }
+
+  const clientMap = {};
+  (clients || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
+
+  const unresolved = squareIds.filter(id => !clientMap[id]);
+  if (unresolved.length > 0) log.warn(`${unresolved.length} Square IDs not found in clients table`);
+
+  return subscriptions.map(s => ({ ...s, client_id: clientMap[s.customer_id] || null }));
+}
+
+async function upsertMemberSync(subscriptions, log) {
+  const rows = subscriptions.map(s => ({
+    square_customer_id:  s.customer_id,
+    client_id:           s.client_id || null,
+    membership_plan:     s.plan_variation_data?.name || s.plan_id || "AZS Membership",
+    status:              normalizeMemberStatus(s.status),
+    square_started_at:   s.start_date    ? new Date(s.start_date).toISOString()    : null,
+    square_cancelled_at: s.canceled_date ? new Date(s.canceled_date).toISOString() : null,
+    synced_at:           new Date().toISOString()
+  }));
+  const { error } = await supabase
+    .from("square_member_sync")
+    .upsert(rows, { onConflict: "square_customer_id" });
+  if (error) throw new Error(`square_member_sync upsert error: ${error.message}`);
+  log.info(`Upserted ${rows.length} rows into square_member_sync`);
+  return rows.length;
+}
+
+async function updateClientsTable(subscriptions, log) {
+  const matched     = subscriptions.filter(s => s.client_id);
+  const activeIds   = matched.filter(s => normalizeMemberStatus(s.status) === "active").map(s => s.client_id);
+  const inactiveIds = matched.filter(s => normalizeMemberStatus(s.status) !== "active").map(s => s.client_id);
+  let updated = 0;
+
+  if (activeIds.length > 0) {
+    const { error } = await supabase.from("clients")
+      .update({ membership_active: true, updated_at: new Date().toISOString() })
+      .in("id", activeIds);
+    if (error) log.warn(`Active update error: ${error.message}`);
+    else updated += activeIds.length;
+  }
+  if (inactiveIds.length > 0) {
+    const { error } = await supabase.from("clients")
+      .update({ membership_active: false, updated_at: new Date().toISOString() })
+      .in("id", inactiveIds);
+    if (error) log.warn(`Inactive update error: ${error.message}`);
+    else updated += inactiveIds.length;
+  }
+
+  log.info(`Updated membership_active on ${updated} clients`);
+  return updated;
+}
+
+async function syncMemberFlags(log) {
+  const { data, error } = await supabase.rpc("sync_member_exclusions");
+  if (error) throw new Error(`sync_member_exclusions() failed: ${error.message}`);
+  log.info(`sync_member_exclusions() flipped ${data} flash_group_members flags`);
+  return data;
+}
+
+function normalizeMemberStatus(squareStatus) {
+  const map = {
+    "ACTIVE": "active", "PENDING": "active",
+    "PAUSED": "paused", "SUSPENDED": "paused",
+    "CANCELED": "cancelled", "DEACTIVATED": "cancelled"
+  };
+  return map[squareStatus] || "cancelled";
+}
+
+function makeSyncLogger() {
+  const entries = [];
+  const stamp = () => new Date().toISOString();
+  return {
+    entries,
+    info:  (msg) => { const e = `[INFO]  ${stamp()} ${msg}`; entries.push(e); console.log(e); },
+    warn:  (msg) => { const e = `[WARN]  ${stamp()} ${msg}`; entries.push(e); console.warn(e); },
+    error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END FLASH FILL — Member Sync
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Format date helper ────────────────────────────────────────────────────────
-// Accepts: "thursday", "tomorrow", "next monday", "march 28", "3/28"
 function resolveDate(input) {
   const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Phoenix" }));
@@ -238,7 +391,6 @@ function resolveDate(input) {
     const d = new Date(now); d.setDate(d.getDate() + diff); return d;
   }
 
-  // Try parsing as a date string
   const parsed = new Date(input);
   if (!isNaN(parsed)) return parsed;
 
@@ -246,7 +398,7 @@ function resolveDate(input) {
 }
 
 function formatDateForSquare(date) {
-  return date.toISOString().split("T")[0]; // YYYY-MM-DD
+  return date.toISOString().split("T")[0];
 }
 
 function formatTimeForDisplay(isoString) {
@@ -264,7 +416,7 @@ function isLiveWindow() {
   const now = new Date();
   const azTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Phoenix" }));
   const total = azTime.getHours() * 60 + azTime.getMinutes();
-  return total >= 480 && total < 570; // 8:00–9:30 AM
+  return total >= 480 && total < 570;
 }
 
 // ── Route: Inbound call ───────────────────────────────────────────────────────
@@ -299,21 +451,17 @@ app.post("/whisper", (req, res) => {
 <Response><Say voice="alice">Awaken Zen Spa call.</Say></Response>`);
 });
 
-// ── Helper: extract tool parameters and toolCallId from Vapi's payload ───────
+// ── Helper: extract tool parameters ──────────────────────────────────────────
 function extractParams(body) {
-  // Direct params (simple tool call)
   if (body.phoneNumber || body.serviceKey || body.date) return body;
-  // Nested in message.toolCallList[0].function.arguments
   try {
     const args = body?.message?.toolCallList?.[0]?.function?.arguments;
     if (args) return typeof args === "string" ? JSON.parse(args) : args;
   } catch (e) {}
-  // Nested in message.toolCalls[0].function.arguments
   try {
     const args = body?.message?.toolCalls?.[0]?.function?.arguments;
     if (args) return typeof args === "string" ? JSON.parse(args) : args;
   } catch (e) {}
-  // Nested in message.functionCall.parameters
   try {
     const params = body?.message?.functionCall?.parameters;
     if (params) return typeof params === "string" ? JSON.parse(params) : params;
@@ -321,7 +469,7 @@ function extractParams(body) {
   return body;
 }
 
-// ── Helper: extract toolCallId from Vapi's payload ────────────────────────────
+// ── Helper: extract toolCallId ────────────────────────────────────────────────
 function extractToolCallId(body) {
   return body?.message?.toolCallList?.[0]?.id ||
          body?.message?.toolCalls?.[0]?.id ||
@@ -331,12 +479,9 @@ function extractToolCallId(body) {
 }
 
 // ── Helper: format response for Vapi ─────────────────────────────────────────
-// Vapi requires: { results: [{ toolCallId: "...", result: "single-line string" }] }
 function vapiResponse(res, toolCallId, resultText) {
   const singleLine = String(resultText).replace(/\n/g, " ").replace(/\r/g, "");
-  res.json({
-    results: [{ toolCallId, result: singleLine }]
-  });
+  res.json({ results: [{ toolCallId, result: singleLine }] });
 }
 
 // ── Route: Send Booking Link ──────────────────────────────────────────────────
@@ -346,7 +491,6 @@ app.post("/send-booking-link", async (req, res) => {
     const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number || params.to;
     if (!phoneNumber) {
-      console.log("sendBookingLink — no phone number. Body:", JSON.stringify(req.body).slice(0, 300));
       return vapiResponse(res, toolCallId, "Booking link ready — please ask the caller for their phone number to send the link.");
     }
     await twilioClient.messages.create({
@@ -458,15 +602,10 @@ app.post("/book-appointment", async (req, res) => {
     const variationId = service.variations[dur];
     if (!variationId) return vapiResponse(res, toolCallId, "Duration not available for this service.");
 
-    // Create or find customer
     let customerId = null;
     if (customerPhone || customerEmail) {
       const searchRes = await squareRequest("POST", "/customers/search", {
-        query: {
-          filter: {
-            phone_number: { exact: customerPhone }
-          }
-        }
+        query: { filter: { phone_number: { exact: customerPhone } } }
       });
       if (searchRes.customers && searchRes.customers.length > 0) {
         customerId = searchRes.customers[0].id;
@@ -481,7 +620,6 @@ app.post("/book-appointment", async (req, res) => {
       }
     }
 
-    // Create booking
     const bookingRes = await squareRequest("POST", "/bookings", {
       booking: {
         location_id: LOCATION_ID,
@@ -514,7 +652,6 @@ app.post("/book-appointment", async (req, res) => {
       day: "numeric"
     });
 
-    // Send confirmation SMS with card-on-file link
     if (customerPhone) {
       await twilioClient.messages.create({
         from: TWILIO_NUMBER,
@@ -555,13 +692,10 @@ app.post("/send-booking-confirmation", async (req, res) => {
   }
 });
 
-// ── Route: Vapi Server Message — injects current date/time at call start ──────
-// In Vapi: Assistant → Advanced → Server Messages → enable "assistant-request"
-// Server URL: https://nodejs-production-2820.up.railway.app/vapi-message
+// ── Route: Vapi Server Message ────────────────────────────────────────────────
 app.post("/vapi-message", (req, res) => {
   const msg = req.body?.message;
 
-  // Fires at the start of every call — inject current Arizona date into system prompt
   if (msg?.type === "assistant-request") {
     const now = new Date();
     const azOptions = { timeZone: "America/Phoenix" };
@@ -602,11 +736,10 @@ Use this to resolve any relative date the caller mentions:
     });
   }
 
-  // For all other message types just acknowledge
   res.json({});
 });
 
-// ── Route: Square diagnostic (can remove after setup) ────────────────────────
+// ── Route: Square diagnostic ──────────────────────────────────────────────────
 app.get("/square-info", async (req, res) => {
   try {
     const teamRes = await squareRequest("POST", "/team-members/search", {
@@ -622,41 +755,28 @@ app.get("/square-info", async (req, res) => {
 // SMS AI SYSTEM — Kai text concierge
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Conversation memory (in-memory, persists for session duration) ────────────
-const smsConversations = new Map(); // phone -> [{ role, content }]
-const SMS_MAX_HISTORY = 20; // keep last 20 messages per client
+const smsConversations = new Map();
+const SMS_MAX_HISTORY = 20;
 
 function getConversation(phone) {
-  if (!smsConversations.has(phone)) {
-    smsConversations.set(phone, []);
-  }
+  if (!smsConversations.has(phone)) smsConversations.set(phone, []);
   return smsConversations.get(phone);
 }
 
 function addToConversation(phone, role, content) {
   const convo = getConversation(phone);
   convo.push({ role, content });
-  // Keep last N messages
-  if (convo.length > SMS_MAX_HISTORY) {
-    convo.splice(0, convo.length - SMS_MAX_HISTORY);
-  }
+  if (convo.length > SMS_MAX_HISTORY) convo.splice(0, convo.length - SMS_MAX_HISTORY);
 }
 
-// ── Square: Get upcoming bookings for a phone number ─────────────────────────
 async function getUpcomingBookings(phoneNumber) {
-  // Search for customer by phone
   const customerRes = await squareRequest("POST", "/customers/search", {
     query: { filter: { phone_number: { exact: phoneNumber } } }
   });
-
   if (!customerRes.customers?.length) return [];
-
   const customerId = customerRes.customers[0].id;
-
-  // Get upcoming bookings
   const now = new Date().toISOString();
   const future = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-
   const bookingsRes = await squareRequest("POST", "/bookings/search", {
     query: {
       filter: {
@@ -666,11 +786,9 @@ async function getUpcomingBookings(phoneNumber) {
       }
     }
   });
-
   return bookingsRes.bookings || [];
 }
 
-// ── Square: Cancel a booking ──────────────────────────────────────────────────
 async function cancelBooking(bookingId, version) {
   return squareRequest("POST", `/bookings/${bookingId}/cancel`, {
     booking_version: version,
@@ -678,34 +796,26 @@ async function cancelBooking(bookingId, version) {
   });
 }
 
-// ── Format booking for display ────────────────────────────────────────────────
 function formatBookingForDisplay(booking) {
   const dt = new Date(booking.start_at);
   const date = dt.toLocaleDateString("en-US", {
-    timeZone: "America/Phoenix",
-    weekday: "long", month: "long", day: "numeric"
+    timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
   });
   const time = dt.toLocaleTimeString("en-US", {
-    timeZone: "America/Phoenix",
-    hour: "numeric", minute: "2-digit", hour12: true
+    timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
   });
-  const service = booking.appointment_segments?.[0]?.service_variation_id || "Service";
   return `${date} at ${time}`;
 }
 
-// ── SMS System Prompt ─────────────────────────────────────────────────────────
 function buildSmsSystemPrompt(clientPhone) {
   const now = new Date();
   const azDate = now.toLocaleDateString("en-US", {
-    timeZone: "America/Phoenix",
-    weekday: "long", year: "numeric", month: "long", day: "numeric"
+    timeZone: "America/Phoenix", weekday: "long", year: "numeric", month: "long", day: "numeric"
   });
   const azTime = now.toLocaleTimeString("en-US", {
-    timeZone: "America/Phoenix",
-    hour: "numeric", minute: "2-digit", hour12: true
+    timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
   });
 
-  // Check if within 24 hours of any upcoming booking (for cancellation warning)
   return `You are Kai, the front desk concierge at Awaken Zen Spa in Mesa, Arizona. You are responding via SMS/text message. Keep responses warm, concise, and conversational — this is a text exchange, not a phone call. Use short paragraphs. Never use markdown formatting like ** or ##.
 
 Today is ${azDate}. Current time is ${azTime} Arizona time.
@@ -773,12 +883,9 @@ TONE:
 - Sign off warmly on first message: "— Kai at Awaken Zen"`;
 }
 
-// ── Process AI action commands from Claude's response ─────────────────────────
 async function processActions(responseText, clientPhone, clientName) {
   let finalText = responseText;
   const actions = [];
-
-  // Extract all action commands
   const actionRegex = /\[([A-Z_]+)(?::([^\]]+))?\]/g;
   let match;
   while ((match = actionRegex.exec(responseText)) !== null) {
@@ -791,14 +898,9 @@ async function processActions(responseText, clientPhone, clientName) {
 
       if (action.name === "GET_BOOKINGS") {
         const bookings = await getUpcomingBookings(clientPhone);
-        if (bookings.length === 0) {
-          result = "No upcoming appointments found for this number.";
-        } else {
-          result = bookings.map((b, i) =>
-            `${i + 1}. ${formatBookingForDisplay(b)} (ID: ${b.id}, v${b.version})`
-          ).join("\n");
-        }
-        // Replace action with result context for Claude to use
+        result = bookings.length === 0
+          ? "No upcoming appointments found for this number."
+          : bookings.map((b, i) => `${i + 1}. ${formatBookingForDisplay(b)} (ID: ${b.id}, v${b.version})`).join("\n");
         finalText = finalText.replace(action.full, `[Bookings found: ${result}]`);
       }
 
@@ -844,7 +946,6 @@ async function processActions(responseText, clientPhone, clientName) {
           result = `Error: ${cancelRes.errors[0]?.detail || "Could not cancel"}`;
         } else {
           result = "Booking cancelled successfully.";
-          // Notify owner
           await twilioClient.messages.create({
             from: TWILIO_NUMBER,
             to: OWNER_CELL,
@@ -860,7 +961,6 @@ async function processActions(responseText, clientPhone, clientName) {
         if (service) {
           const variationId = service.variations[dur || "60"];
           if (variationId) {
-            // Find/create customer
             let customerId = null;
             const searchRes = await squareRequest("POST", "/customers/search", {
               query: { filter: { phone_number: { exact: phone || clientPhone } } }
@@ -874,7 +974,6 @@ async function processActions(responseText, clientPhone, clientName) {
               });
               customerId = createRes.customer?.id;
             }
-
             const bookingRes = await squareRequest("POST", "/bookings", {
               booking: {
                 location_id: LOCATION_ID,
@@ -890,16 +989,11 @@ async function processActions(responseText, clientPhone, clientName) {
               },
               idempotency_key: `sms-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
             });
-
             if (bookingRes.errors) {
               result = `Error: ${bookingRes.errors[0]?.detail || "Could not book"}`;
             } else {
               const booking = bookingRes.booking;
-              const displayTime = formatTimeForDisplay(booking.start_at);
-              const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
-                timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
-              });
-              result = `Booked! ${service.label} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
+              result = `Booked! ${service.label} on ${formatBookingForDisplay(booking)}. ID: ${booking.id}`;
             }
           }
         }
@@ -924,15 +1018,9 @@ async function processActions(responseText, clientPhone, clientName) {
   return finalText;
 }
 
-// ── Call Claude API for SMS response ─────────────────────────────────────────
 async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
   const history = getConversation(clientPhone);
-
-  // Build messages array
-  const messages = [
-    ...history,
-    { role: "user", content: userMessage }
-  ];
+  const messages = [...history, { role: "user", content: userMessage }];
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -968,30 +1056,22 @@ app.post("/incoming-sms", async (req, res) => {
     }
 
     console.log(`SMS from ${clientPhone}: ${incomingMsg}`);
-
-    // Add user message to history
     addToConversation(clientPhone, "user", incomingMsg);
 
-    // Get Claude's response
     let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName);
-
-    // Process any action commands in the response
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
 
-    // If response still has action placeholders, run Claude one more time with results
     if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
-        aiResponse.includes("[Cancel result:") || aiResponse.includes("[Booking result:")) {
+        aiResponse.includes("[Cancel result:")  || aiResponse.includes("[Booking result:")) {
 
       addToConversation(clientPhone, "assistant", aiResponse);
       addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client without showing the raw action output.");
 
       let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, give the client a natural, warm response.", clientName);
       finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
-
       addToConversation(clientPhone, "assistant", finalResponse);
       twiml.message(finalResponse);
     } else {
-      // Clean response of any leftover action syntax
       const cleanResponse = aiResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       addToConversation(clientPhone, "assistant", cleanResponse);
       twiml.message(cleanResponse);
@@ -1005,14 +1085,34 @@ app.post("/incoming-sms", async (req, res) => {
   res.type("text/xml").send(twiml.toString());
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FLASH FILL — Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Manual trigger — staff portal "Sync Members" button
+app.post("/flash-fill/sync-members", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const result = await runMemberSync();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("Manual sync error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END FLASH FILL — Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
-// ── Catch-all POST for Vapi webhook events (status, speech, etc.) ─────────────
-app.post("/", (req, res) => {
-  // Vapi sends many event types to the server URL — just acknowledge them all
-  res.json({ received: true });
-});
+// ── Catch-all POST for Vapi webhook events ────────────────────────────────────
+app.post("/", (req, res) => res.json({ received: true }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
