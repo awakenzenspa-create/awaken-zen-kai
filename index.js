@@ -1,6 +1,4 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// v2
-// ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
 // Full build: time routing, SMS tools, Square availability + booking
 // Flash Fill: member sync, group management
@@ -1194,6 +1192,146 @@ app.post("/flash-fill/import-customers", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Manual trigger — regroup all clients into flash groups
+app.post("/flash-fill/regroup", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const log = makeGroupLogger();
+    log.info("Client grouping started");
+
+    const groups = await loadFlashGroups(log);
+    const clients = await loadClientsWithStats(log);
+    log.info(`Loaded ${clients.length} eligible non-member clients`);
+
+    const vipThreshold = calcVipThreshold(clients);
+    log.info(`VIP spend threshold (top 20%): $${vipThreshold.toFixed(2)}`);
+
+    const assignments = [];
+    const skipped = [];
+    for (const client of clients) {
+      const group = assignFlashGroup(client, groups, vipThreshold);
+      if (group) assignments.push({ client, group });
+      else skipped.push(client.id);
+    }
+
+    const breakdown = {};
+    Object.values(groups).forEach(g => { breakdown[g.name] = 0; });
+    assignments.forEach(a => { breakdown[a.group.name] = (breakdown[a.group.name] || 0) + 1; });
+
+    let grouped = 0;
+    for (let i = 0; i < assignments.length; i += 200) {
+      const chunk = assignments.slice(i, i + 200).map(({ client, group }) => ({
+        client_id:            client.id,
+        group_id:             group.id,
+        opted_in:             client.opted_in,
+        is_member:            false,
+        last_booked_flash_at: client.last_booked_flash_at || null,
+        assigned_at:          new Date().toISOString(),
+        updated_at:           new Date().toISOString(),
+      }));
+      const { error } = await supabase.from("flash_group_members").upsert(chunk, { onConflict: "client_id" });
+      if (error) log.warn(`Upsert error: ${error.message}`);
+      else grouped += chunk.length;
+    }
+
+    log.info(`Grouped ${grouped}, skipped ${skipped.length}. Breakdown: ${JSON.stringify(breakdown)}`);
+    res.json({ success: true, grouped, skipped: skipped.length, breakdown, log: log.entries });
+  } catch (err) {
+    console.error("Regroup error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLASH FILL — Grouping helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadFlashGroups(log) {
+  const { data, error } = await supabase.from("flash_groups").select("id, name, label, sort_order").eq("is_active", true).order("sort_order");
+  if (error) throw new Error(`Could not load flash_groups: ${error.message}`);
+  const groups = {};
+  data.forEach(g => { groups[g.name] = g; });
+  return groups;
+}
+
+async function loadClientsWithStats(log) {
+  const { data: clients, error: ce } = await supabase
+    .from("clients").select("id, first_name, phone, email, created_at, membership_active")
+    .or("membership_active.is.null,membership_active.eq.false");
+  if (ce) throw new Error(`Could not load clients: ${ce.message}`);
+
+  const { data: appts, error: ae } = await supabase
+    .from("appointments").select("client_id, starts_at, status, price_usd")
+    .in("status", ["completed", "COMPLETED"]).not("client_id", "is", null);
+  if (ae) throw new Error(`Could not load appointments: ${ae.message}`);
+
+  const { data: members } = await supabase.from("flash_group_members").select("client_id, opted_in, last_booked_flash_at");
+  const optedInMap = {};
+  const flashBookedMap = {};
+  (members || []).forEach(m => { optedInMap[m.client_id] = m.opted_in || false; flashBookedMap[m.client_id] = m.last_booked_flash_at; });
+
+  const now = new Date();
+  const statsMap = {};
+  for (const a of (appts || [])) {
+    const d = new Date(a.starts_at);
+    const p = parseFloat(a.price_usd) || 0;
+    if (!statsMap[a.client_id]) statsMap[a.client_id] = { totalVisits: 0, visits60d: 0, spend12mo: 0, lastVisitDate: null };
+    const s = statsMap[a.client_id];
+    s.totalVisits++;
+    if (d >= new Date(now - 60*24*3600000)) s.visits60d++;
+    if (d >= new Date(now - 365*24*3600000)) s.spend12mo += p;
+    if (!s.lastVisitDate || d > s.lastVisitDate) s.lastVisitDate = d;
+  }
+
+  return (clients || [])
+    .filter(c => c.phone || c.email)
+    .map(c => {
+      const s = statsMap[c.id] || {};
+      const ageMs = now - new Date(c.created_at);
+      const daysSinceLast = s.lastVisitDate ? (now - s.lastVisitDate) / 86400000 : null;
+      const flashBookedAt = flashBookedMap[c.id] ? new Date(flashBookedMap[c.id]) : null;
+      return {
+        id: c.id, first_name: c.first_name, phone: c.phone, email: c.email,
+        opted_in: optedInMap[c.id] || false,
+        last_booked_flash_at: flashBookedMap[c.id] || null,
+        totalVisits: s.totalVisits || 0, visits60d: s.visits60d || 0,
+        spend12mo: s.spend12mo || 0, lastVisitDate: s.lastVisitDate || null,
+        daysSinceLast, ageMs,
+        bookedFlash90d: flashBookedAt ? (now - flashBookedAt) < 90*24*3600000 : false,
+        isVipByAge: ageMs >= 365*24*3600000 && (s.totalVisits || 0) >= 3,
+      };
+    })
+    .filter(c => c.totalVisits > 0 || c.opted_in);
+}
+
+function calcVipThreshold(clients) {
+  const spends = clients.map(c => c.spend12mo).filter(s => s > 0).sort((a, b) => a - b);
+  if (spends.length === 0) return 999999;
+  return spends[Math.min(Math.floor(spends.length * 0.8), spends.length - 1)];
+}
+
+function assignFlashGroup(client, groups, vipThreshold) {
+  if (client.opted_in || client.bookedFlash90d) return groups["A"];
+  if (client.spend12mo >= vipThreshold || client.isVipByAge) return groups["C"];
+  if (client.visits60d >= 2) return groups["B"];
+  if (client.totalVisits >= 1 && client.daysSinceLast !== null && client.daysSinceLast >= 60 && client.daysSinceLast <= 120) return groups["D"];
+  return null;
+}
+
+function makeGroupLogger() {
+  const entries = [];
+  const stamp = () => new Date().toISOString();
+  return {
+    entries,
+    info:  (msg) => { const e = `[INFO]  ${stamp()} ${msg}`; entries.push(e); console.log(e); },
+    warn:  (msg) => { const e = `[WARN]  ${stamp()} ${msg}`; entries.push(e); console.warn(e); },
+    error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
