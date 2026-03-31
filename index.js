@@ -300,7 +300,7 @@ async function resolveClientIds(subscriptions, log) {
 }
 
 async function upsertMemberSync(subscriptions, log) {
-  const rows = subscriptions.map(s => ({
+  const allRows = subscriptions.map(s => ({
     square_customer_id:  s.customer_id,
     client_id:           s.client_id || null,
     membership_plan:     s.plan_variation_data?.name || s.plan_id || "AZS Membership",
@@ -309,12 +309,33 @@ async function upsertMemberSync(subscriptions, log) {
     square_cancelled_at: s.canceled_date ? new Date(s.canceled_date).toISOString() : null,
     synced_at:           new Date().toISOString()
   }));
+
+  // Dedup by square_customer_id — keep active over cancelled, then most recent start date
+  const deduped = Object.values(
+    allRows.reduce((acc, row) => {
+      const existing = acc[row.square_customer_id];
+      if (!existing) { acc[row.square_customer_id] = row; return acc; }
+      const rowIsActive      = row.status === "active";
+      const existingIsActive = existing.status === "active";
+      if (rowIsActive && !existingIsActive) { acc[row.square_customer_id] = row; return acc; }
+      if (!rowIsActive && existingIsActive) return acc;
+      if (row.square_started_at > (existing.square_started_at || "")) {
+        acc[row.square_customer_id] = row;
+      }
+      return acc;
+    }, {})
+  );
+
+  if (allRows.length !== deduped.length) {
+    log.info(`Deduped ${allRows.length} subscriptions to ${deduped.length} unique customers`);
+  }
+
   const { error } = await supabase
     .from("square_member_sync")
-    .upsert(rows, { onConflict: "square_customer_id" });
+    .upsert(deduped, { onConflict: "square_customer_id" });
   if (error) throw new Error(`square_member_sync upsert error: ${error.message}`);
-  log.info(`Upserted ${rows.length} rows into square_member_sync`);
-  return rows.length;
+  log.info(`Upserted ${deduped.length} rows into square_member_sync`);
+  return deduped.length;
 }
 
 async function updateClientsTable(subscriptions, log) {
