@@ -1,4 +1,4 @@
-//v11
+//v12
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1988,6 +1988,213 @@ function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, cl
 </body>
 </html>`;
 }
+
+// ── Square webhook — booking.updated / booking.cancelled ─────────────────────
+// Register this URL in Square Developer → Webhooks:
+// https://awaken-zen-kai-production.up.railway.app/square-webhook
+// Events to subscribe: booking.updated, booking.created
+app.post("/square-webhook", async (req, res) => {
+  // Acknowledge Square immediately — must respond within 3 seconds
+  res.status(200).json({ received: true });
+
+  try {
+    const event = req.body;
+    const eventType = event.type;
+    const booking   = event.data?.object?.booking;
+
+    if (!booking) return;
+
+    const status = booking.status;
+    const isCancellation = ["CANCELLED_BY_SELLER", "CANCELLED_BY_BUYER"].includes(status);
+    if (!isCancellation) return;
+
+    console.log(`Square webhook: ${eventType} — booking ${booking.id} status ${status}`);
+
+    // Extract slot details from the booking
+    const slotStart = booking.start_at;
+    if (!slotStart) return;
+
+    // Only fire flash offer if slot is at least 1 hour away
+    const hoursOut = (new Date(slotStart) - new Date()) / 3600000;
+    if (hoursOut < 1) {
+      console.log(`Flash fill skipped — slot too soon (${hoursOut.toFixed(1)} hrs out)`);
+      return;
+    }
+    if (hoursOut > 24) {
+      console.log(`Flash fill skipped — slot too far out (${hoursOut.toFixed(1)} hrs), consider manual trigger`);
+      return;
+    }
+
+    // Get service name from appointment segments
+    const seg = booking.appointment_segments?.[0];
+    const serviceVariationId = seg?.service_variation_id || "";
+
+    // Map Square variation IDs back to service names
+    const variationToService = {
+      "TIB77G2AIP7GABDSWZFXN6FF": "European Royalty: Classic Swedish",
+      "QAVQO7BGDYOVEI65CWUCOWY7": "European Royalty: Classic Swedish",
+      "W7KH4DISA5C7BQMNED2OIGKM": "European Royalty: Classic Swedish",
+      "BIWQQPHXSAC25JHMLKEIYVVV": "Muscle Mender: Deep Tissue",
+      "F4D4WJDBUV6VPW3NZ5WUPAWA": "Muscle Mender: Deep Tissue",
+      "XP5NCMNL7ZSPKK44GFN46BW3": "Muscle Mender: Deep Tissue",
+      "K2W6NJ6KSTSVZWPKE3L7WIWD": "Spring Senses: Lymphatic Drainage",
+      "TIQJY3TSW6ZWJ27X2ENK2LKF": "Spring Senses: Lymphatic Drainage",
+      "6VULYOQRLLMEWRZBM5DEWVQE": "Spring Senses: Lymphatic Drainage",
+      "P347T32CDIANCUFTNRFR573O": "Sole Symphony: Ashiatsu Barefoot Massage",
+      "Q5RG75PJSA432POINYAKY24A": "Sole Symphony: Ashiatsu Barefoot Massage",
+      "73Z3KGC536LSV32TXW6XP4AW": "Sole Symphony: Ashiatsu Barefoot Massage",
+      "6XAXNAZIE3MDEZBLB3GD5UYU": "Warm Stone Retreat",
+      "K7XIEBQ2DTYB4YF5TCHLNMXJ": "Warm Stone Retreat",
+      "HAAWAKV7TD7L6OD27CNZ2A33": "Calm and Clear: Relaxation Facial",
+      "UUNTT5FDE6MYNJGEMLEB7STI": "Calm and Clear: Relaxation Facial",
+      "LAEOGJ23JVQGXQ2SD4UWECJV": "Youthful Glow: Anti-Aging Facial",
+      "33L2RRNH6UCPWLUTEZFRHTEM": "Youthful Glow: Anti-Aging Facial",
+      "4LWHUA7X53NZFBT3FB54J272": "Micro-Dermabrasion Treatment",
+      "SYT7F6KBIPDXRN5KFXCKWE5U": "Micro-Dermabrasion Treatment",
+      "DQVFGWUDTDG3ID5VDHD2FORT": "Dermaplane Treatment",
+      "EG3TALRSZNFYB6FIURQ6URS6": "Dermaplane Treatment",
+      "3DYWCG6NEV3PBAUXHMNYWT4V": "Micro-Needling Treatment",
+      "TIC4IYJZHISU4ZCBHZIYKTUT": "Luxury Spa Experience",
+      "ZQQHCBPQNW2HCHKYW7HQ3VWX": "Radiant Head & Scalp Experience",
+    };
+    const serviceName = variationToService[serviceVariationId] || "Massage";
+    const durationMins = seg?.duration_minutes || 60;
+
+    // Get the cancelling customer's Square ID to exclude them from the offer
+    const cancelledSquareCustomerId = booking.customer_id || null;
+
+    // Calculate offer details
+    const discountPrice = hoursOut >= 12 ? 79 : 75;
+    const addon         = hoursOut < 4   ? "Heat Infusion Ritual" : null;
+    const claimHours    = hoursOut >= 12 ? 4 : hoursOut >= 4 ? 2 : 1;
+    const claimDeadline = new Date(Date.now() + claimHours * 3600000).toISOString();
+
+    // Get current group
+    const { data: cycleRows } = await supabase
+      .from("flash_cycle_state")
+      .select("current_group_id, flash_groups(id, name, label)")
+      .limit(1);
+    const cycle = cycleRows?.[0];
+    if (!cycle?.current_group_id) {
+      console.log("Flash fill skipped — no cycle state");
+      return;
+    }
+    const groupId   = cycle.current_group_id;
+    const groupName = cycle.flash_groups?.name || "?";
+
+    // Get eligible recipients (excluding the cancelling client)
+    const { data: recipients } = await supabase
+      .rpc("get_eligible_recipients", {
+        p_group_id: groupId,
+        p_excluded_square_customer_id: cancelledSquareCustomerId
+      });
+
+    if (!recipients || recipients.length === 0) {
+      console.log(`Flash fill: no eligible recipients in group ${groupName} — advancing pointer`);
+      await supabase.rpc("advance_cycle_pointer");
+      return;
+    }
+
+    // Create flash offer record
+    const slotDisplay = new Date(slotStart).toLocaleString("en-US", {
+      timeZone: "America/Phoenix", weekday: "short", month: "short",
+      day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
+    });
+
+    const { data: offerRow } = await supabase
+      .from("flash_offers").insert({
+        square_appt_id:           booking.id,
+        square_cancelled_client_id: cancelledSquareCustomerId,
+        service_name:             serviceName,
+        slot_start:               slotStart,
+        slot_duration_minutes:    durationMins,
+        group_id:                 groupId,
+        discount_price:           discountPrice,
+        regular_price:            85,
+        addon_offered:            addon,
+        claim_deadline:           claimDeadline,
+        status:                   "active",
+        recipients_count:         recipients.length,
+        trigger_source:           "webhook",
+      }).select().single();
+
+    if (!offerRow) {
+      console.error("Flash fill: failed to create offer record");
+      return;
+    }
+    const offerId = offerRow.id;
+
+    // Build SMS message
+    const buildSms = (firstName) => {
+      const name = firstName || "there";
+      if (hoursOut >= 12) {
+        return `Hi ${name}! A spot just opened at Awaken Zen Spa:\n${serviceName} | ${slotDisplay}\nFlash price: $${discountPrice} (reg. $85)\nReply YES to claim — first come, first served.\nReply STOP to opt out.`;
+      } else if (addon) {
+        return `${name} — last-minute opening today at AZS!\n${serviceName} at ${slotDisplay} | $${discountPrice} + complimentary ${addon}\nReply YES to grab it. Expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
+      } else {
+        return `Hi ${name}! Same-day opening at Awaken Zen Spa:\n${serviceName} | ${slotDisplay} | $${discountPrice}\nReply YES to claim. Expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
+      }
+    };
+
+    // Send SMS + email to group
+    let smsSent = 0, emailSent = 0;
+    const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
+
+    for (const r of recipients) {
+      // SMS
+      if (r.phone) {
+        try {
+          await twilioClient.messages.create({ from: TWILIO_NUMBER, to: r.phone, body: buildSms(r.first_name) });
+          smsSent++;
+        } catch (e) { console.warn(`SMS failed to ${r.phone}: ${e.message}`); }
+      }
+      // Email
+      if (r.email) {
+        try {
+          const serviceKeyMap = {
+            "european royalty: classic swedish": "european", "muscle mender: deep tissue": "muscle",
+            "spring senses: lymphatic drainage": "lymphatic", "sole symphony: ashiatsu barefoot massage": "ashiatsu",
+            "warm stone retreat": "warm-stone", "calm and clear: relaxation facial": "calm-clear",
+            "youthful glow: anti-aging facial": "youthful",
+          };
+          const svcKey = serviceKeyMap[serviceName.toLowerCase()] || "european";
+          const slotDate = new Date(slotStart);
+          const dateStr  = `${slotDate.getFullYear()}-${String(slotDate.getMonth()+1).padStart(2,"0")}-${String(slotDate.getDate()).padStart(2,"0")}`;
+          const timeStr  = slotDate.toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "2-digit", minute: "2-digit", hour12: false });
+          const addonParam = addon ? `&addon=${encodeURIComponent(addon)}` : "";
+          const claimLink = `${BASE_URL}/flash-fill/claim-link?offerId=${offerId}&clientId=${r.client_id}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${discountPrice}${addonParam}`;
+          const emailHtml = buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, claimDeadline, claimLink, hoursOut });
+          await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: "Awaken Zen Spa <hello@awakenzenspa.com>",
+              to: [r.email],
+              subject: buildEmailSubject({ firstName: r.first_name, serviceName, slotDisplay, discountPrice, addon, hoursOut }),
+              html: emailHtml
+            })
+          });
+          emailSent++;
+        } catch (e) { console.warn(`Email failed to ${r.email}: ${e.message}`); }
+      }
+    }
+
+    // Update offer counts and advance pointer
+    await supabase.from("flash_offers").update({ sms_sent_count: smsSent, email_sent_count: emailSent }).eq("id", offerId);
+    await supabase.rpc("advance_cycle_pointer");
+
+    // Notify owner
+    await twilioClient.messages.create({
+      from: TWILIO_NUMBER, to: OWNER_CELL,
+      body: `🌿 AZS Flash Fill auto-triggered!\n${serviceName} | ${slotDisplay} | $${discountPrice}${addon ? ` + ${addon}` : ""}\nGroup ${groupName}: ${smsSent} SMS, ${emailSent} emails\nOffer ID: ${offerId.slice(0,8)}`
+    });
+
+    console.log(`Flash fill complete: offer ${offerId}, group ${groupName}, ${smsSent} SMS, ${emailSent} emails`);
+
+  } catch (err) {
+    console.error("Square webhook error:", err.message);
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
