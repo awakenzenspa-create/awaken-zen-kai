@@ -1,4 +1,4 @@
-//v9
+//v10
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1808,7 +1808,8 @@ app.get("/flash-fill/claim-link", async (req, res) => {
       "youthful glow": "youthful", "anti-aging": "youthful",
     };
     const svcKey = serviceKeyMap[offer.service_name?.toLowerCase()] || "european";
-    const bookingUrl = `https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${offer.discount_price}`;
+    const addonParam = offer.addon_offered ? `&addon=${encodeURIComponent(offer.addon_offered)}` : "";
+    const bookingUrl = `https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${offer.discount_price}${addonParam}`;
     res.redirect(bookingUrl);
 
   } catch (err) {
