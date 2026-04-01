@@ -8,6 +8,7 @@
 
 const express = require("express");
 const twilio  = require("twilio");
+const { triggerSocialFlash } = require('./jobs/socialPost');
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
@@ -211,6 +212,19 @@ const SERVICES = {
     variations: { "45": "UMOB6VGE2XHHMX3S3AYVG4SX" }
   }
 };
+
+function getServiceDescription(serviceName) {
+  const descriptions = {
+    'European Royalty: Classic Swedish':        'A full-body ritual of warmth, pressure, and restoration.',
+    'Muscle Mender: Deep Tissue':               'Targeted deep work for tension and chronic holding patterns.',
+    'Spring Senses: Lymphatic Drainage':        'A gentle, flowing technique that moves and clears.',
+    'Sole Symphony: Ashiatsu Barefoot Massage': 'Broad, gravity-assisted pressure for deep release.',
+    'Warm Stone Retreat':                       'Heated basalt stones melt tension at the deepest layer.',
+    'Calm and Clear: Relaxation Facial':        'A calming, skin-restoring ritual for the face.',
+    'Youthful Glow: Anti-Aging Facial':         'Targeted lifting and renewal for luminous skin.',
+  };
+  return descriptions[serviceName] || 'A deeply restorative treatment at Awaken Zen Spa.';
+}
 
 // ── Square API helper ─────────────────────────────────────────────────────────
 async function squareRequest(method, path, body = null) {
@@ -2188,6 +2202,17 @@ app.post("/square-webhook", async (req, res) => {
       from: TWILIO_NUMBER, to: OWNER_CELL,
       body: `🌿 AZS Flash Fill auto-triggered!\n${serviceName} | ${slotDisplay} | $${discountPrice}${addon ? ` + ${addon}` : ""}\nGroup ${groupName}: ${smsSent} SMS, ${emailSent} emails\nOffer ID: ${offerId.slice(0,8)}`
     });
+
+    // Trigger Social Flash (non-blocking — fire and forget)
+    triggerSocialFlash(offerId, slotStart, {
+      serviceName:        serviceName,
+      serviceDescription: getServiceDescription(serviceName),
+      flashPrice:         discountPrice,
+      regPrice:           85,
+      addon:              addon
+    });
+
+    console.log(`Flash fill complete: offer ${offerId}, group ${groupName}, ${smsSent} SMS, ${emailSent} emails`);
 
     console.log(`Flash fill complete: offer ${offerId}, group ${groupName}, ${smsSent} SMS, ${emailSent} emails`);
 
