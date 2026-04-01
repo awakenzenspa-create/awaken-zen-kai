@@ -1,4 +1,4 @@
-//v7
+//v8
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1473,6 +1473,57 @@ app.post("/flash-fill/test-offer", async (req, res) => {
     });
   } catch (err) {
     console.error("Test offer error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Flash Fill: Test email ───────────────────────────────────────────────────
+app.post("/flash-fill/test-email", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const now = new Date();
+    const tomorrow = new Date(now.getTime() + 20 * 3600000);
+    const slotDisplay = tomorrow.toLocaleString("en-US", {
+      timeZone: "America/Phoenix", weekday: "short", month: "short",
+      day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
+    });
+    const claimDeadline = new Date(now.getTime() + 4 * 3600000).toISOString();
+    const claimLink = "https://awakenzenspa.com/booking?flash=test";
+
+    const html = buildFlashEmail({
+      r: { first_name: "Brant", email: "pewonkab@gmail.com", client_id: "test" },
+      serviceName:   "European Royalty: Classic Swedish",
+      slotDisplay,
+      discountPrice: 79,
+      addon:         null,
+      claimDeadline,
+      claimLink,
+      hoursOut:      20
+    });
+
+    const sendRes = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from:    "Awaken Zen Spa <hello@awakenzenspa.com>",
+        to:      ["pewonkab@gmail.com"],
+        subject: `Brant, a spot just opened — European Royalty: Classic Swedish $79`,
+        html
+      })
+    });
+
+    const data = await sendRes.json();
+    if (!sendRes.ok) throw new Error(JSON.stringify(data));
+
+    res.json({ success: true, message: "Test email sent to pewonkab@gmail.com", resend: data });
+  } catch (err) {
+    console.error("Test email error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
