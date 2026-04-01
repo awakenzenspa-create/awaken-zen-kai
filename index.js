@@ -1,4 +1,4 @@
-//v12
+//v13
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -2199,6 +2199,178 @@ app.post("/square-webhook", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLASH FILL — Escalation engine
+// Runs every 15 minutes. Finds unclaimed offers past their claim deadline
+// and sends to the next group in rotation (max 2 escalations per offer).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function runEscalationCheck() {
+  try {
+    // Find active offers past their claim deadline
+    const { data: expiredOffers } = await supabase
+      .from("flash_offers")
+      .select("*")
+      .eq("status", "active")
+      .lt("claim_deadline", new Date().toISOString())
+      .lte("escalation_level", 1); // max 2 escalations (levels 0 and 1)
+
+    if (!expiredOffers || expiredOffers.length === 0) return;
+
+    console.log(`Escalation check: ${expiredOffers.length} offer(s) to escalate`);
+
+    for (const offer of expiredOffers) {
+      try {
+        // Check if slot is still in the future
+        const hoursOut = (new Date(offer.slot_start) - new Date()) / 3600000;
+        if (hoursOut < 0.5) {
+          // Slot already passed or too close — expire the offer
+          await supabase.from("flash_offers")
+            .update({ status: "expired", updated_at: new Date().toISOString() })
+            .eq("id", offer.id);
+          console.log(`Offer ${offer.id.slice(0,8)} expired — slot passed`);
+          continue;
+        }
+
+        // Get next group in rotation
+        const { data: currentGroup } = await supabase
+          .from("flash_groups")
+          .select("sort_order")
+          .eq("id", offer.group_id)
+          .single();
+
+        const nextSortOrder = (currentGroup?.sort_order % 4) + 1; // wraps 4→1
+        const { data: nextGroup } = await supabase
+          .from("flash_groups")
+          .select("id, name")
+          .eq("sort_order", nextSortOrder)
+          .eq("is_active", true)
+          .single();
+
+        if (!nextGroup) {
+          await supabase.from("flash_offers")
+            .update({ status: "expired", updated_at: new Date().toISOString() })
+            .eq("id", offer.id);
+          continue;
+        }
+
+        // Get eligible recipients in next group
+        const { data: recipients } = await supabase
+          .rpc("get_eligible_recipients", {
+            p_group_id: nextGroup.id,
+            p_excluded_square_customer_id: offer.square_cancelled_client_id || null
+          });
+
+        if (!recipients || recipients.length === 0) {
+          // Nobody eligible in next group either — expire
+          await supabase.from("flash_offers")
+            .update({ status: "expired", updated_at: new Date().toISOString() })
+            .eq("id", offer.id);
+          console.log(`Offer ${offer.id.slice(0,8)} expired — no recipients in group ${nextGroup.name}`);
+
+          // Notify owner if final escalation failed
+          await twilioClient.messages.create({
+            from: TWILIO_NUMBER, to: OWNER_CELL,
+            body: `⚠️ AZS Flash Fill: offer for ${offer.service_name} at ${new Date(offer.slot_start).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })} expired unfilled after escalation.`
+          });
+          continue;
+        }
+
+        // New claim window — 1 hr if urgent, 2 hrs otherwise
+        const newClaimHours  = hoursOut < 4 ? 1 : 2;
+        const newClaimDeadline = new Date(Date.now() + newClaimHours * 3600000).toISOString();
+        const slotDisplay    = new Date(offer.slot_start).toLocaleString("en-US", {
+          timeZone: "America/Phoenix", weekday: "short", month: "short",
+          day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
+        });
+
+        // Update offer to next group
+        await supabase.from("flash_offers").update({
+          group_id:               nextGroup.id,
+          escalation_level:       (offer.escalation_level || 0) + 1,
+          escalated_from_group_id: offer.group_id,
+          claim_deadline:         newClaimDeadline,
+          recipients_count:       recipients.length,
+          updated_at:             new Date().toISOString()
+        }).eq("id", offer.id);
+
+        // Build SMS
+        const addon = offer.addon_offered;
+        const buildEscalationSms = (firstName) => {
+          const name = firstName || "there";
+          if (addon) {
+            return `${name} — last-minute opening at Awaken Zen Spa!\n${offer.service_name} | ${slotDisplay}\n$${offer.discount_price} + complimentary ${addon}\nReply YES to claim. Expires ${new Date(newClaimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
+          }
+          return `Hi ${name}! Last-minute opening at Awaken Zen Spa:\n${offer.service_name} | ${slotDisplay} | $${offer.discount_price}\nReply YES to claim. Offer expires ${new Date(newClaimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
+        };
+
+        // Send to next group
+        let smsSent = 0, emailSent = 0;
+        const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
+
+        for (const r of recipients) {
+          if (r.phone) {
+            try {
+              await twilioClient.messages.create({ from: TWILIO_NUMBER, to: r.phone, body: buildEscalationSms(r.first_name) });
+              smsSent++;
+            } catch (e) { console.warn(`Escalation SMS failed: ${e.message}`); }
+          }
+          if (r.email) {
+            try {
+              const serviceKeyMap = {
+                "european royalty: classic swedish": "european", "muscle mender: deep tissue": "muscle",
+                "spring senses: lymphatic drainage": "lymphatic", "sole symphony: ashiatsu barefoot massage": "ashiatsu",
+                "warm stone retreat": "warm-stone", "calm and clear: relaxation facial": "calm-clear",
+                "youthful glow: anti-aging facial": "youthful",
+              };
+              const svcKey   = serviceKeyMap[offer.service_name?.toLowerCase()] || "european";
+              const slotDate = new Date(offer.slot_start);
+              const dateStr  = `${slotDate.getFullYear()}-${String(slotDate.getMonth()+1).padStart(2,"0")}-${String(slotDate.getDate()).padStart(2,"0")}`;
+              const timeStr  = slotDate.toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "2-digit", minute: "2-digit", hour12: false });
+              const addonParam = addon ? `&addon=${encodeURIComponent(addon)}` : "";
+              const claimLink = `${BASE_URL}/flash-fill/claim-link?offerId=${offer.id}&clientId=${r.client_id}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${offer.discount_price}${addonParam}`;
+              const emailHtml = buildFlashEmail({ r, serviceName: offer.service_name, slotDisplay, discountPrice: offer.discount_price, addon, claimDeadline: newClaimDeadline, claimLink, hoursOut });
+              await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from: "Awaken Zen Spa <hello@awakenzenspa.com>",
+                  to: [r.email],
+                  subject: buildEmailSubject({ firstName: r.first_name, serviceName: offer.service_name, slotDisplay, discountPrice: offer.discount_price, addon, hoursOut }),
+                  html: emailHtml
+                })
+              });
+              emailSent++;
+            } catch (e) { console.warn(`Escalation email failed: ${e.message}`); }
+          }
+        }
+
+        await supabase.from("flash_offers")
+          .update({ sms_sent_count: (offer.sms_sent_count || 0) + smsSent, email_sent_count: (offer.email_sent_count || 0) + emailSent })
+          .eq("id", offer.id);
+
+        console.log(`Escalated offer ${offer.id.slice(0,8)} to group ${nextGroup.name}: ${smsSent} SMS, ${emailSent} emails`);
+
+        // Notify owner of escalation
+        await twilioClient.messages.create({
+          from: TWILIO_NUMBER, to: OWNER_CELL,
+          body: `🔄 AZS Flash Fill escalated to Group ${nextGroup.name}:\n${offer.service_name} | ${slotDisplay}\n${smsSent} SMS, ${emailSent} emails sent`
+        });
+
+      } catch (offerErr) {
+        console.error(`Escalation error for offer ${offer.id}:`, offerErr.message);
+      }
+    }
+  } catch (err) {
+    console.error("Escalation check error:", err.message);
+  }
+}
+
+// Start escalation polling — runs every 15 minutes
+setInterval(runEscalationCheck, 15 * 60 * 1000);
+// Also run once on startup after a short delay
+setTimeout(runEscalationCheck, 30 * 1000);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
