@@ -1,4 +1,4 @@
-//v5
+//v6
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1473,6 +1473,212 @@ app.post("/flash-fill/test-offer", async (req, res) => {
     });
   } catch (err) {
     console.error("Test offer error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Flash Fill: Main trigger ─────────────────────────────────────────────────
+// POST /flash-fill/trigger
+// Body: { serviceName, slotStart (ISO), durationMins, overridePrice, addonOffered, source }
+app.post("/flash-fill/trigger", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const {
+      serviceName   = "Massage",
+      slotStart,
+      durationMins  = 60,
+      overridePrice = null,
+      addonOffered  = null,
+      source        = "manual"
+    } = req.body;
+
+    if (!slotStart) return res.status(400).json({ error: "slotStart is required (ISO string)" });
+
+    // 1. Calculate offer details based on time to slot
+    const hoursOut = (new Date(slotStart) - new Date()) / 3600000;
+    let discountPrice, addon, claimHours;
+    if (hoursOut >= 12) {
+      discountPrice = 79; addon = null;                    claimHours = 4;
+    } else if (hoursOut >= 4) {
+      discountPrice = 75; addon = null;                    claimHours = 2;
+    } else {
+      discountPrice = 75; addon = "Heat Infusion Ritual";  claimHours = 1;
+    }
+    if (overridePrice && overridePrice >= 75) discountPrice = overridePrice;
+    if (addonOffered) addon = addonOffered;
+    const claimDeadline = new Date(Date.now() + claimHours * 3600000).toISOString();
+
+    // 2. Get current group from cycle state
+    const { data: cycleRows } = await supabase
+      .from("flash_cycle_state").select("current_group_id, flash_groups(id, name, label)").limit(1);
+    const cycle = cycleRows?.[0];
+    if (!cycle?.current_group_id) return res.status(500).json({ error: "No cycle state found" });
+    const groupId   = cycle.current_group_id;
+    const groupName = cycle.flash_groups?.name || "?";
+
+    // 3. Get eligible recipients via DB function
+    const { data: recipients, error: recErr } = await supabase
+      .rpc("get_eligible_recipients", { p_group_id: groupId, p_excluded_square_customer_id: null });
+    if (recErr) throw new Error(`get_eligible_recipients failed: ${recErr.message}`);
+
+    // 4. Create flash_offer record
+    const slotDisplay = new Date(slotStart).toLocaleString("en-US", {
+      timeZone: "America/Phoenix", weekday: "short", month: "short",
+      day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
+    });
+    const { data: offerRow, error: offerErr } = await supabase
+      .from("flash_offers").insert({
+        service_name:       serviceName,
+        slot_start:         slotStart,
+        group_id:           groupId,
+        discount_price:     discountPrice,
+        regular_price:      85,
+        addon_offered:      addon,
+        claim_deadline:     claimDeadline,
+        status:             "active",
+        recipients_count:   recipients?.length || 0,
+        trigger_source:     source,
+      }).select().single();
+    if (offerErr) throw new Error(`flash_offers insert failed: ${offerErr.message}`);
+    const offerId = offerRow.id;
+
+    // 5. Build SMS message
+    const buildSms = (firstName) => {
+      const name = firstName || "there";
+      if (hoursOut >= 12) {
+        return `Hi ${name}! A spot just opened at Awaken Zen Spa:
+${serviceName} | ${slotDisplay}
+Flash price: $${discountPrice} (reg. $85)
+Reply YES to claim — first come, first served.
+Reply STOP to opt out.`;
+      } else if (addon) {
+        return `${name} — last-minute opening today at AZS!
+${serviceName} at ${slotDisplay} | $${discountPrice} + complimentary ${addon}
+Reply YES to grab it. Offer expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.
+Reply STOP to opt out.`;
+      } else {
+        return `Hi ${name}! Same-day opening at Awaken Zen Spa:
+${serviceName} | ${slotDisplay} | $${discountPrice}
+Reply YES to claim. Offer expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.
+Reply STOP to opt out.`;
+      }
+    };
+
+    // 6. Send SMS to each recipient + update send tracking
+    let smsSent = 0;
+    const sendErrors = [];
+    for (const r of (recipients || [])) {
+      if (!r.phone) continue;
+      try {
+        await twilioClient.messages.create({
+          from: TWILIO_NUMBER,
+          to:   r.phone,
+          body: buildSms(r.first_name)
+        });
+        smsSent++;
+        // Update send tracking on flash_group_members
+        await supabase.from("flash_group_members")
+          .update({ last_sent_at: new Date().toISOString(), send_count_14d: supabase.rpc("increment_send_count", { p_client_id: r.client_id }) })
+          .eq("client_id", r.client_id);
+      } catch (smsErr) {
+        sendErrors.push({ client_id: r.client_id, error: smsErr.message });
+      }
+    }
+
+    // 7. Update offer with sent count
+    await supabase.from("flash_offers").update({ sms_sent_count: smsSent }).eq("id", offerId);
+
+    // 8. Advance cycle pointer
+    await supabase.rpc("advance_cycle_pointer");
+
+    // 9. Notify owner
+    await twilioClient.messages.create({
+      from: TWILIO_NUMBER,
+      to:   OWNER_CELL,
+      body: `🌿 AZS Flash Fill sent!
+${serviceName} | ${slotDisplay} | $${discountPrice}${addon ? ` + ${addon}` : ""}
+Group ${groupName}: ${smsSent} SMS sent
+Offer ID: ${offerId.slice(0,8)}`
+    });
+
+    res.json({
+      success: true,
+      offerId,
+      group:      groupName,
+      smsSent,
+      recipients: recipients?.length || 0,
+      price:      discountPrice,
+      addon,
+      claimDeadline,
+      errors:     sendErrors.length > 0 ? sendErrors : undefined
+    });
+
+  } catch (err) {
+    console.error("Flash fill trigger error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Flash Fill: Claim endpoint ────────────────────────────────────────────────
+// Called by Kai when a client replies YES to a flash offer SMS
+app.post("/flash-fill/claim", async (req, res) => {
+  const { offerId, clientPhone, squareCustomerId } = req.body;
+  try {
+    // Find the offer
+    const { data: offer } = await supabase
+      .from("flash_offers").select("*").eq("id", offerId).single();
+    if (!offer) return res.status(404).json({ error: "Offer not found" });
+    if (offer.status !== "active") return res.json({ success: false, alreadyClaimed: true, status: offer.status });
+
+    // Find client by phone or square_customer_id
+    let clientId = null;
+    if (clientPhone) {
+      const { data: c } = await supabase.from("clients").select("id").eq("phone", clientPhone).single();
+      clientId = c?.id;
+    }
+    if (!clientId && squareCustomerId) {
+      const { data: c } = await supabase.from("clients").select("id").eq("square_customer_id", squareCustomerId).single();
+      clientId = c?.id;
+    }
+
+    // Mark offer as filled
+    await supabase.from("flash_offers").update({
+      status:               "filled",
+      filled_by_client_id:  clientId,
+      filled_at:            new Date().toISOString(),
+      updated_at:           new Date().toISOString()
+    }).eq("id", offerId);
+
+    // Update flash booking history on the client
+    if (clientId) {
+      await supabase.from("flash_group_members")
+        .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("client_id", clientId);
+    }
+
+    res.json({ success: true, offerId, clientId, status: "filled" });
+
+  } catch (err) {
+    console.error("Flash claim error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Flash Fill: Offer status ──────────────────────────────────────────────────
+app.get("/flash-fill/status/:offerId", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const { data: offer } = await supabase
+      .from("flash_offers").select("*, flash_groups(name, label)").eq("id", req.params.offerId).single();
+    if (!offer) return res.status(404).json({ error: "Offer not found" });
+    res.json({ success: true, offer });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
