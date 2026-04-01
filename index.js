@@ -1,4 +1,4 @@
-//v10
+//v11
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -830,7 +830,7 @@ function formatBookingForDisplay(booking) {
   return `${date} at ${time}`;
 }
 
-function buildSmsSystemPrompt(clientPhone) {
+function buildSmsSystemPrompt(clientPhone, flashOfferContext = null) {
   const now = new Date();
   const azDate = now.toLocaleDateString("en-US", {
     timeZone: "America/Phoenix", weekday: "long", year: "numeric", month: "long", day: "numeric"
@@ -844,6 +844,8 @@ function buildSmsSystemPrompt(clientPhone) {
 Today is ${azDate}. Current time is ${azTime} Arizona time.
 
 The client's phone number is ${clientPhone}. You can use this to look up their appointments.
+
+${flashOfferContext || ''}
 
 BUSINESS DETAILS:
 Awaken Zen Spa — 2830 E Brown Rd Suite 10, Mesa AZ 85213
@@ -1032,6 +1034,28 @@ async function processActions(responseText, clientPhone, clientName) {
         finalText = finalText.replace(action.full, "[Booking link sent]");
       }
 
+      else if (action.name === "CLAIM_FLASH") {
+        // Silently mark flash offer as filled after Kai books it
+        const [offerId] = action.args;
+        if (offerId) {
+          const { data: clientRow } = await supabase
+            .from("clients").select("id").eq("phone", clientPhone).single();
+          await supabase.from("flash_offers").update({
+            status: "filled",
+            filled_by_client_id: clientRow?.id || null,
+            filled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }).eq("id", offerId).eq("status", "active");
+          if (clientRow?.id) {
+            await supabase.from("flash_group_members")
+              .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+              .eq("client_id", clientRow.id);
+          }
+          console.log(`Flash offer ${offerId} claimed via Kai SMS by ${clientPhone}`);
+        }
+        finalText = finalText.replace(action.full, "");
+      }
+
     } catch (err) {
       console.error(`SMS action ${action.name} error:`, err.message);
       finalText = finalText.replace(action.full, `[Action failed: ${err.message}]`);
@@ -1041,7 +1065,7 @@ async function processActions(responseText, clientPhone, clientName) {
   return finalText;
 }
 
-async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
+async function getKaiSmsResponse(clientPhone, userMessage, clientName, flashOfferContext = null) {
   const history = getConversation(clientPhone);
   const messages = [...history, { role: "user", content: userMessage }];
 
@@ -1055,7 +1079,7 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 500,
-      system: buildSmsSystemPrompt(clientPhone),
+      system: buildSmsSystemPrompt(clientPhone, flashOfferContext),
       messages
     })
   });
@@ -1079,9 +1103,71 @@ app.post("/incoming-sms", async (req, res) => {
     }
 
     console.log(`SMS from ${clientPhone}: ${incomingMsg}`);
+
+    // ── Flash offer claim detection ───────────────────────────────────────────
+    // If client replies YES (or similar), check for an active flash offer
+    // and inject offer context so Kai can book it directly
+    let flashOfferContext = null;
+    const isAffirmative = /^(yes|yeah|yep|yup|ok|okay|sure|book it|i'll take it|claim|do it|absolutely|sounds good|perfect|let's do it)/i.test(incomingMsg.trim());
+
+    if (isAffirmative) {
+      try {
+        // Find active flash offer sent within last 4 hours
+        const { data: activeOffers } = await supabase
+          .from("flash_offers")
+          .select("*, flash_groups(name)")
+          .eq("status", "active")
+          .gt("claim_deadline", new Date().toISOString())
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (activeOffers && activeOffers.length > 0) {
+          const offer = activeOffers[0];
+          const slotDisplay = new Date(offer.slot_start).toLocaleString("en-US", {
+            timeZone: "America/Phoenix", weekday: "long", month: "long",
+            day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
+          });
+
+          // Map service name to Kai's serviceKey format
+          const serviceKeyMap = {
+            "european royalty: classic swedish": "european royalty",
+            "muscle mender: deep tissue": "muscle mender",
+            "spring senses: lymphatic drainage": "spring senses",
+            "sole symphony: ashiatsu barefoot massage": "sole symphony",
+            "warm stone retreat": "warm stone",
+            "calm and clear: relaxation facial": "calm and clear",
+            "youthful glow: anti-aging facial": "youthful glow",
+          };
+          const serviceKey = serviceKeyMap[offer.service_name?.toLowerCase()] || offer.service_name;
+
+          flashOfferContext = `
+⚡ FLASH OFFER ACTIVE — Client is replying to a flash offer SMS:
+Offer ID: ${offer.id}
+Service: ${offer.service_name} (serviceKey: "${serviceKey}")
+Date/Time: ${slotDisplay}
+Start ISO: ${offer.slot_start}
+Flash Price: $${offer.discount_price}${offer.addon_offered ? `
+Complimentary add-on: ${offer.addon_offered}` : ""}
+Offer expires: ${new Date(offer.claim_deadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}
+
+INSTRUCTIONS:
+1. Warmly confirm you got their YES and tell them the slot details
+2. Ask for their name if you don't already know it from conversation history
+3. Use [BOOK_APPOINTMENT: ${serviceKey}|60|${offer.slot_start}|{their name}|${clientPhone}] to book
+4. After booking succeeds, include [CLAIM_FLASH:${offer.id}] silently in your response — do not show this to the client, it just marks the offer as filled
+5. Confirm the booking warmly and mention the flash price of $${offer.discount_price}${offer.addon_offered ? ` plus their complimentary ${offer.addon_offered}` : ""}
+6. If the slot is no longer available, apologize and offer to check other times`;
+
+          console.log(`Flash offer detected for ${clientPhone}, offer ${offer.id}`);
+        }
+      } catch (flashErr) {
+        console.warn("Flash offer lookup failed:", flashErr.message);
+      }
+    }
+
     addToConversation(clientPhone, "user", incomingMsg);
 
-    let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName);
+    let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName, flashOfferContext);
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
 
     if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
