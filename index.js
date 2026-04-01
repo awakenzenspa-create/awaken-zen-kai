@@ -1261,7 +1261,7 @@ async function loadFlashGroups(log) {
 async function loadClientsWithStats(log) {
   const { data: clients, error: ce } = await supabase
     .from("clients").select("id, first_name, phone, email, created_at, membership_active")
-    .or("membership_active.is.null,membership_active.eq.false");
+    .neq("membership_active", true);
   if (ce) throw new Error(`Could not load clients: ${ce.message}`);
 
   const { data: appts, error: ae } = await supabase
