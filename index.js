@@ -1,4 +1,4 @@
-//v6
+//v7
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1591,6 +1591,34 @@ Reply STOP to opt out.`;
     // 7. Update offer with sent count
     await supabase.from("flash_offers").update({ sms_sent_count: smsSent }).eq("id", offerId);
 
+    // 7b. Send Resend emails in parallel
+    let emailSent = 0;
+    const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
+    for (const r of (recipients || [])) {
+      if (!r.email) continue;
+      try {
+        const claimLink = `${BASE_URL}/flash-fill/claim-link?offerId=${offerId}&clientId=${r.client_id}`;
+        const emailHtml = buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, claimDeadline, claimLink, hoursOut });
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            from:    "Awaken Zen Spa <hello@awakenzenspa.com>",
+            to:      [r.email],
+            subject: buildEmailSubject({ firstName: r.first_name, serviceName, slotDisplay, discountPrice, addon, hoursOut }),
+            html:    emailHtml
+          })
+        });
+        emailSent++;
+      } catch (emailErr) {
+        console.warn(`Email failed for ${r.email}: ${emailErr.message}`);
+      }
+    }
+    await supabase.from("flash_offers").update({ email_sent_count: emailSent }).eq("id", offerId);
+
     // 8. Advance cycle pointer
     await supabase.rpc("advance_cycle_pointer");
 
@@ -1682,6 +1710,130 @@ app.get("/flash-fill/status/:offerId", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ── Flash Fill: Email claim link (GET — client clicks button in email) ───────
+app.get("/flash-fill/claim-link", async (req, res) => {
+  const { offerId, clientId } = req.query;
+  try {
+    const { data: offer } = await supabase
+      .from("flash_offers").select("*").eq("id", offerId).single();
+
+    if (!offer) return res.redirect(`https://awakenzenspa.com?flash=not-found`);
+    if (offer.status !== "active") {
+      return res.redirect(`https://awakenzenspa.com?flash=claimed`);
+    }
+    if (new Date() > new Date(offer.claim_deadline)) {
+      await supabase.from("flash_offers").update({ status: "expired" }).eq("id", offerId);
+      return res.redirect(`https://awakenzenspa.com?flash=expired`);
+    }
+
+    // Mark as filled
+    await supabase.from("flash_offers").update({
+      status:              "filled",
+      filled_by_client_id: clientId || null,
+      filled_at:           new Date().toISOString(),
+      updated_at:          new Date().toISOString()
+    }).eq("id", offerId);
+
+    if (clientId) {
+      await supabase.from("flash_group_members")
+        .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("client_id", clientId);
+    }
+
+    // Redirect to booking page with pre-fill context
+    res.redirect(`https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}`);
+
+  } catch (err) {
+    console.error("Claim link error:", err.message);
+    res.redirect(`https://awakenzenspa.com?flash=error`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLASH FILL — Email builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildEmailSubject({ firstName, serviceName, slotDisplay, discountPrice, addon, hoursOut }) {
+  const name = firstName || "there";
+  if (hoursOut >= 12) return `${name}, a spot just opened — ${serviceName} $${discountPrice}`;
+  if (addon)          return `Last-minute opening today + complimentary ${addon} — $${discountPrice}`;
+  return `Same-day opening at AZS — ${serviceName} at ${slotDisplay}`;
+}
+
+function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, claimDeadline, claimLink, hoursOut }) {
+  const name = r.first_name || "there";
+  const expiresTime = new Date(claimDeadline).toLocaleTimeString("en-US", {
+    timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
+  });
+
+  const addonHtml = addon ? `
+    <tr>
+      <td style="padding:0 40px 20px;">
+        <table cellpadding="0" cellspacing="0" style="width:100%;background:#fdf6f0;border-left:3px solid #c47a5a;">
+          <tr><td style="padding:14px 18px;font-family:Georgia,serif;font-size:14px;color:#2a2220;line-height:1.6;">
+            <strong>Complimentary add-on:</strong> ${addon}<br>
+            <span style="color:#8a7f78;font-size:13px;">Aromatherapy hot towel applied at your preferred area</span>
+          </td></tr>
+        </table>
+      </td>
+    </tr>` : "";
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f2ee;font-family:Georgia,serif;">
+<table cellpadding="0" cellspacing="0" style="width:100%;max-width:560px;margin:40px auto;background:#faf8f5;border:1px solid #e5dfd8;">
+
+  <!-- Header -->
+  <tr><td style="padding:32px 40px;border-bottom:1px solid #e5dfd8;text-align:center;">
+    <p style="margin:0;font-family:Georgia,serif;font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#8a7f78;">Awaken Zen Spa</p>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:36px 40px 8px;">
+    <h1 style="margin:0 0 16px;font-family:Georgia,serif;font-weight:400;font-size:26px;color:#2a2220;line-height:1.3;">A spot just opened for you${hoursOut < 6 ? " today" : ""}.</h1>
+    <p style="margin:0 0 24px;font-family:Arial,sans-serif;font-size:15px;color:#4a4440;line-height:1.7;">Hi ${name}, we have a last-minute opening and wanted to offer it to you first.</p>
+  </td></tr>
+
+  <!-- Offer details -->
+  <tr><td style="padding:0 40px 24px;">
+    <table cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #e5dfd8;background:#fff;">
+      <tr><td style="padding:20px 24px;border-bottom:1px solid #e5dfd8;">
+        <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Service</p>
+        <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:17px;color:#2a2220;">${serviceName}</p>
+      </td></tr>
+      <tr><td style="padding:20px 24px;border-bottom:1px solid #e5dfd8;">
+        <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Date &amp; Time</p>
+        <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:17px;color:#2a2220;">${slotDisplay}</p>
+      </td></tr>
+      <tr><td style="padding:20px 24px;">
+        <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Flash Price</p>
+        <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:24px;color:#c47a5a;"><strong>$${discountPrice}</strong> <span style="font-size:14px;color:#8a7f78;text-decoration:line-through;">$85</span></p>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  ${addonHtml}
+
+  <!-- CTA -->
+  <tr><td style="padding:0 40px 28px;text-align:center;">
+    <a href="${claimLink}" style="display:inline-block;padding:16px 40px;background:#2a2220;color:#faf8f5;font-family:Arial,sans-serif;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;text-decoration:none;">Claim This Spot</a>
+    <p style="margin:16px 0 0;font-family:Arial,sans-serif;font-size:12px;color:#8a7f78;">Offer expires at ${expiresTime} · First come, first served</p>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:24px 40px;border-top:1px solid #e5dfd8;text-align:center;">
+    <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;color:#8a7f78;line-height:1.6;">
+      Awaken Zen Spa · 2830 E Brown Rd Suite 10, Mesa AZ 85213<br>
+      <a href="https://awakenzenspa.com" style="color:#8a7f78;">awakenzenspa.com</a> · (602) 688-2578
+    </p>
+  </td></tr>
+
+</table>
+</body>
+</html>`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
