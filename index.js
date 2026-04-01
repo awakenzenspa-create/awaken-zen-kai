@@ -1,4 +1,4 @@
-//v8
+//v9
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1792,8 +1792,24 @@ app.get("/flash-fill/claim-link", async (req, res) => {
         .eq("client_id", clientId);
     }
 
-    // Redirect to booking page with pre-fill context
-    res.redirect(`https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}`);
+    // Build pre-fill params from offer data
+    const slotDate = new Date(offer.slot_start);
+    const dateStr  = slotDate.toLocaleDateString("en-US", { timeZone: "America/Phoenix", year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-").replace(/-(\d+)-(\d+)$/, (_, m, d) => `-${m.padStart(2,"0")}-${d.padStart(2,"0")}`);
+    const timeStr  = slotDate.toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "2-digit", minute: "2-digit", hour12: false });
+
+    // Map service name to booking page service key
+    const serviceKeyMap = {
+      "european royalty": "european", "classic swedish": "european", "swedish": "european",
+      "muscle mender": "muscle", "deep tissue": "deep-tissue",
+      "spring senses": "lymphatic", "lymphatic": "lymphatic",
+      "sole symphony": "ashiatsu", "ashiatsu": "ashiatsu",
+      "warm stone": "warm-stone", "hot stone": "warm-stone",
+      "calm and clear": "calm-clear", "relaxation facial": "calm-clear",
+      "youthful glow": "youthful", "anti-aging": "youthful",
+    };
+    const svcKey = serviceKeyMap[offer.service_name?.toLowerCase()] || "european";
+    const bookingUrl = `https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${offer.discount_price}`;
+    res.redirect(bookingUrl);
 
   } catch (err) {
     console.error("Claim link error:", err.message);
