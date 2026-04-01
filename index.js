@@ -1406,10 +1406,8 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
           client_id:          b.customer_id ? (clientMap[b.customer_id] || null) : null,
           starts_at:          b.start_at,
           status:             normalizedStatus,
-          price_usd:          null, // Square bookings don't include price — use service catalog if needed
+          price_usd:          null,
           service_name:       seg.service_variation_id || null,
-          duration_minutes:   seg.duration_minutes || null,
-          staff_name:         seg.team_member_id || null,
           synced_at:          new Date().toISOString()
         };
       });
