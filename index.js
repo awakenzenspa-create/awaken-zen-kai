@@ -1,4 +1,4 @@
-//v2
+//v3
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -1268,7 +1268,7 @@ async function loadClientsWithStats(log) {
 
   const { data: appts, error: ae } = await supabase
     .from("square_appointments_cache").select("client_id, square_customer_id, starts_at, status")
-    .eq("status", "completed").not("client_id", "is", null);
+    .in("status", ["completed", "cancelled"]).not("client_id", "is", null);
   if (ae) throw new Error(`Could not load appointments: ${ae.message}`);
 
   const { data: members } = await supabase.from("flash_group_members").select("client_id, opted_in, last_booked_flash_at");
@@ -1395,13 +1395,18 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
 
     log.info(`Fetched ${bookings.length} bookings from Square`);
 
-    // Map to cache rows — only keep completed/cancelled/no_show
+    // Map to cache rows — keep all non-upcoming bookings
+    // Square uses ACCEPTED for booked (including past) appointments
     const rows = bookings
-      .filter(b => ["COMPLETED", "CANCELLED", "NO_SHOW", "CANCELLED_BY_SELLER", "CANCELLED_BY_BUYER"].includes(b.status))
+      .filter(b => !["PENDING"].includes(b.status))
       .map(b => {
         const seg = b.appointment_segments?.[0] || {};
+        const bStart = new Date(b.start_at);
+        const isPast = bStart < new Date();
         const normalizedStatus = b.status.startsWith("CANCELLED") ? "cancelled"
-          : b.status === "NO_SHOW" ? "no_show" : "completed";
+          : b.status === "NO_SHOW" ? "no_show"
+          : (b.status === "ACCEPTED" && isPast) ? "completed"
+          : "upcoming";
         return {
           square_booking_id:  b.id,
           square_customer_id: b.customer_id || null,
