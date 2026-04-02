@@ -2406,3 +2406,313 @@ app.post("/", (req, res) => res.json({ received: true }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
+
+// ── Route: Website Chat (Kai chat widget) ─────────────────────────────────────
+app.post("/chat", async (req, res) => {
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+
+  try {
+    const { message, history = [], sessionId } = req.body;
+    if (!message) return res.status(400).json({ error: "message required" });
+
+    // ── Build Claude messages from history ──
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: "user", content: message.trim() }
+    ];
+
+    // ── Tool definitions (same capabilities as Vapi) ──
+    const tools = [
+      {
+        name: "check_availability",
+        description: "Check available appointment times for a service on a given date",
+        input_schema: {
+          type: "object",
+          properties: {
+            serviceKey: { type: "string", description: "Service name e.g. 'deep tissue', 'swedish', 'hot stone'" },
+            duration:   { type: "string", description: "Duration in minutes: 60, 90, or 120" },
+            date:       { type: "string", description: "Date e.g. 'today', 'tomorrow', 'Friday', or 'April 5'" }
+          },
+          required: ["serviceKey", "date"]
+        }
+      },
+      {
+        name: "book_appointment",
+        description: "Book an appointment for a client",
+        input_schema: {
+          type: "object",
+          properties: {
+            serviceKey:     { type: "string" },
+            duration:       { type: "string" },
+            startAt:        { type: "string", description: "ISO 8601 datetime e.g. 2026-04-05T10:00:00-07:00" },
+            customerName:   { type: "string" },
+            customerPhone:  { type: "string" },
+            customerEmail:  { type: "string" }
+          },
+          required: ["serviceKey", "startAt", "customerName", "customerPhone"]
+        }
+      },
+      {
+        name: "send_booking_link",
+        description: "Text the booking link to the client's phone number",
+        input_schema: {
+          type: "object",
+          properties: {
+            phoneNumber: { type: "string", description: "Client phone number" },
+            clientName:  { type: "string" }
+          },
+          required: ["phoneNumber"]
+        }
+      }
+    ];
+
+    const CHAT_SYSTEM = `You are Kai, the AI concierge for Awaken Zen Spa in Mesa, Arizona.
+You are embedded as a chat widget on the AZS website.
+
+ABOUT AZS:
+- Location: 2830 East Brown Road, Suite 10, Mesa, AZ 85213
+- Phone/text: (602) 688-2578
+- Staff: Brant (LMT, owner) and Trevor (LE, esthetician)
+- Booking: awakenzenspa.com/booking
+
+SERVICES AVAILABLE FOR BOOKING:
+- Swedish massage (European Royalty): 60, 90, 120 min
+- Deep tissue (Muscle Mender): 60, 90, 120 min
+- Lymphatic drainage (Spring Senses): 60, 90, 120 min
+- Ashiatsu barefoot massage (Sole Symphony): 60, 90, 120 min
+- Hot stone massage (Warm Stone Retreat): 90, 120 min
+- Prenatal massage: 60, 90 min
+- Facials: ask about options
+
+CHAT GUIDELINES:
+- Warm, calm, concise — 2-4 sentences max unless checking availability or booking
+- You CAN check real-time availability and book appointments using your tools
+- When someone wants to book: get their preferred service, date, and duration first
+- Then check availability, confirm a time with them, then collect name and phone to book
+- Always confirm details before booking
+- After booking, let them know a confirmation text is on its way
+
+BOOKING FLOW:
+1. Ask: what service, what date, how long (60/90/120 min)?
+2. Use check_availability tool → show available times
+3. Confirm their chosen time
+4. Collect: full name and phone number (email optional)
+5. Use book_appointment tool → confirm booking
+6. Tell them to expect a confirmation text`;
+
+    // ── First Claude call ──
+    const Anthropic = require("@anthropic-ai/sdk");
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    let response = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 600,
+      system: CHAT_SYSTEM,
+      tools,
+      messages,
+    });
+
+    // ── Tool use loop ──
+    let toolMessages = [...messages];
+    while (response.stop_reason === "tool_use") {
+      const toolUseBlock = response.content.find(b => b.type === "tool_use");
+      if (!toolUseBlock) break;
+
+      const { name, id, input } = toolUseBlock;
+      let toolResult = "";
+
+      try {
+        if (name === "check_availability") {
+          const { serviceKey, duration, date } = input;
+          const svcKey = (serviceKey || "").toLowerCase();
+          const service = SERVICES[svcKey];
+
+          if (!service) {
+            toolResult = `I couldn't find that service. Available services: Swedish massage, deep tissue, lymphatic drainage, ashiatsu, hot stone, prenatal massage.`;
+          } else {
+            const dur = String(duration || "60");
+            const variationId = service.variations[dur];
+            if (!variationId) {
+              const available = Object.keys(service.variations).join(", ");
+              toolResult = `${service.label} is available in ${available} minute sessions. Which duration works for you?`;
+            } else {
+              const resolved = resolveDate(date || "tomorrow");
+              if (!resolved) {
+                toolResult = "I couldn't determine that date — could you clarify?";
+              } else {
+                const dateStr = formatDateForSquare(resolved);
+                const data = await squareRequest("POST", "/bookings/availability/search", {
+                  query: {
+                    filter: {
+                      start_at_range: {
+                        start_at: `${dateStr}T08:00:00-07:00`,
+                        end_at:   `${dateStr}T19:00:00-07:00`
+                      },
+                      location_id: LOCATION_ID,
+                      segment_filters: [{
+                        service_variation_id: variationId,
+                        team_member_id_filter: {
+                          any: Object.values(TEAM_MEMBERS).map(m => m.id)
+                        }
+                      }]
+                    }
+                  }
+                });
+
+                const slots = data.availabilities || [];
+                if (slots.length === 0) {
+                  toolResult = `No openings for ${service.label} on that day. Would you like to try a different date?`;
+                } else {
+                  const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
+                  const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+                  // Store slot data for booking
+                  toolResult = `Available times for ${service.label} (${dur} min) on ${dateDisplay}: ${uniqueTimes.join(", ")}. Which time works best?`;
+                  // Attach raw slots for booking reference
+                  toolResult += ` [SLOTS_DATA:${JSON.stringify(slots.slice(0,6).map(s => ({ time: formatTimeForDisplay(s.start_at), iso: s.start_at })))}]`;
+                }
+              }
+            }
+          }
+        }
+
+        else if (name === "book_appointment") {
+          const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = input;
+          const svcKey = (serviceKey || "").toLowerCase();
+          const service = SERVICES[svcKey];
+
+          if (!service) {
+            toolResult = "Service not found.";
+          } else {
+            const dur = String(duration || "60");
+            const variationId = service.variations[dur];
+
+            // Find or create customer
+            let customerId = null;
+            if (customerPhone) {
+              const searchRes = await squareRequest("POST", "/customers/search", {
+                query: { filter: { phone_number: { exact: customerPhone } } }
+              });
+              if (searchRes.customers?.length > 0) {
+                customerId = searchRes.customers[0].id;
+              } else {
+                const createRes = await squareRequest("POST", "/customers", {
+                  given_name: customerName?.split(" ")[0] || "Guest",
+                  family_name: customerName?.split(" ").slice(1).join(" ") || "",
+                  phone_number: customerPhone,
+                  email_address: customerEmail
+                });
+                customerId = createRes.customer?.id;
+              }
+            }
+
+            const bookingRes = await squareRequest("POST", "/bookings", {
+              booking: {
+                location_id: LOCATION_ID,
+                start_at: startAt,
+                customer_id: customerId,
+                customer_note: "Booked via Kai website chat widget.",
+                appointment_segments: [{
+                  service_variation_id: variationId,
+                  service_variation_version: 0,
+                  duration_minutes: parseInt(dur),
+                  team_member_id: TEAM_MEMBERS.brant.id
+                }]
+              },
+              idempotency_key: `kai-chat-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
+            });
+
+            if (bookingRes.errors) {
+              toolResult = "I wasn't able to complete that booking — you can book directly at awakenzenspa.com/booking or text (602) 688-2578.";
+            } else {
+              const booking = bookingRes.booking;
+              const displayTime = formatTimeForDisplay(booking.start_at);
+              const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
+                timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
+              });
+
+              // Send confirmation SMS
+              if (customerPhone) {
+                await twilioClient.messages.create({
+                  from: TWILIO_NUMBER,
+                  to: customerPhone,
+                  body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
+                        `📅 ${service.label}\n🕐 ${displayDate} at ${displayTime}\n` +
+                        `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
+                        `Please add a card on file for our 24-hour cancellation policy:\n${BOOKING_URL}\n\n` +
+                        `Questions? Text (602) 688-2578. See you soon ✨`
+                });
+              }
+
+              toolResult = `BOOKING_CONFIRMED: ${service.label} on ${displayDate} at ${displayTime} for ${customerName}. Confirmation text sent to ${customerPhone}.`;
+            }
+          }
+        }
+
+        else if (name === "send_booking_link") {
+          const { phoneNumber, clientName } = input;
+          if (phoneNumber) {
+            await twilioClient.messages.create({
+              from: TWILIO_NUMBER,
+              to: phoneNumber,
+              body: `Hi${clientName ? " " + clientName.split(" ")[0] : ""}! Here's the booking link for Awaken Zen Spa: ${BOOKING_URL} — or text us at (602) 688-2578 for same-day availability. See you soon ✨`
+            });
+            toolResult = `Booking link sent to ${phoneNumber}.`;
+          } else {
+            toolResult = "No phone number provided.";
+          }
+        }
+
+      } catch (toolErr) {
+        console.error(`[chat] Tool ${name} error:`, toolErr.message);
+        toolResult = "I had trouble with that — please try again or contact us directly at (602) 688-2578.";
+      }
+
+      // Add assistant response + tool result to messages and continue
+      toolMessages = [
+        ...toolMessages,
+        { role: "assistant", content: response.content },
+        {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: id,
+            content: toolResult
+          }]
+        }
+      ];
+
+      response = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 600,
+        system: CHAT_SYSTEM,
+        tools,
+        messages: toolMessages,
+      });
+    }
+
+    // ── Extract final text reply ──
+    const reply = response.content.find(b => b.type === "text")?.text
+      || "I'm sorry, something went wrong. Please reach us at (602) 688-2578.";
+
+    // Strip internal SLOTS_DATA markers from reply
+    const cleanReply = reply.replace(/\[SLOTS_DATA:[^\]]+\]/g, "").trim();
+
+    res.set(corsHeaders).json({ reply: cleanReply });
+
+  } catch (err) {
+    console.error("[chat] Error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please reach us at (602) 688-2578." });
+  }
+});
+
+// ── Route: Chat CORS preflight ────────────────────────────────────────────────
+app.options("/chat", (req, res) => {
+  res.set({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  }).sendStatus(200);
+});
