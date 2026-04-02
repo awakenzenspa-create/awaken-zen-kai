@@ -10,11 +10,14 @@ const express = require("express");
 const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
 const { createClient } = require("@supabase/supabase-js");
+const emailRoutes = require('./email-handler');
+app.use(emailRoutes);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
-
+const emailRoutes = require('./email-handler');
+app.use(emailRoutes);
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const twilioClient  = twilio(
   process.env.TWILIO_ACCOUNT_SID,
