@@ -1,0 +1,1 @@
+$(cat /mnt/user-data/outputs/square-webhook-membership.js)
