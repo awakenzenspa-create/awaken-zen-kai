@@ -2722,3 +2722,15 @@ app.options("/chat", (req, res) => {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   }).sendStatus(200);
 });
+
+// ── Square webhook — membership service redemption ────────────────────────────
+const { handleSquareWebhook: handleMembershipWebhook } = require('./square-webhook-membership');
+app.post("/square-webhook-membership",
+  express.raw({ type: 'application/json' }),
+  (req, res, next) => {
+    req.rawBody = req.body.toString();
+    req.body = JSON.parse(req.rawBody);
+    next();
+  },
+  handleMembershipWebhook
+);
