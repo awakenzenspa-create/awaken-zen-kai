@@ -7,6 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
+const Anthropic = require("@anthropic-ai/sdk");
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
 const { createClient } = require("@supabase/supabase-js");
@@ -693,7 +695,7 @@ app.post("/book-appointment", async (req, res) => {
     if (customerPhone) {
       await twilioClient.messages.create({
         from: TWILIO_NUMBER,
-        to: customerPhone,
+        to: customerPhone.replace(/[^0-9+]/g,'').replace(/^([0-9]{10})$/,'+1$1'),
         body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
               `📅 ${service.label}\n` +
               `🕐 ${displayDate} at ${displayTime}\n` +
@@ -2504,8 +2506,6 @@ BOOKING FLOW:
 6. Tell them to expect a confirmation text`;
 
     // ── First Claude call ──
-    const Anthropic = require("@anthropic-ai/sdk");
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     let response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
@@ -2637,7 +2637,7 @@ BOOKING FLOW:
               if (customerPhone) {
                 await twilioClient.messages.create({
                   from: TWILIO_NUMBER,
-                  to: customerPhone,
+                  to: customerPhone.replace(/[^0-9+]/g,'').replace(/^([0-9]{10})$/,'+1$1'),
                   body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
                         `📅 ${service.label}\n🕐 ${displayDate} at ${displayTime}\n` +
                         `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
