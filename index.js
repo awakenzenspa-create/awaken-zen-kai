@@ -1,4 +1,4 @@
-//v13
+//v14
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -10,8 +10,6 @@ const express = require("express");
 const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
 const { createClient } = require("@supabase/supabase-js");
-const emailRoutes = require('./email-handler');
-app.use(emailRoutes);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
