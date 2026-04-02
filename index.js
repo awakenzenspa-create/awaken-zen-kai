@@ -414,6 +414,12 @@ function makeSyncLogger() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Format date helper ────────────────────────────────────────────────────────
+function buildCardOnFileUrl(customerId, bookingId, service, displayDate, displayTime, customerName) {
+  const base = "https://awakenzenspa.com/save-card";
+  const p = new URLSearchParams({ customer: customerId, booking: bookingId || "", service: service || "", date: displayDate || "", time: displayTime || "", name: customerName || "" });
+  return `${base}?${p.toString()}`;
+}
+
 function resolveDate(input) {
   const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Phoenix" }));
@@ -700,8 +706,8 @@ app.post("/book-appointment", async (req, res) => {
               `📅 ${service.label}\n` +
               `🕐 ${displayDate} at ${displayTime}\n` +
               `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
-              `To complete your booking, please add a card on file for our 24-hour cancellation policy ($25 no-show fee):\n\n` +
-              `${BOOKING_URL}\n\n` +
+              `One last step — save a card on file for our 24-hour cancellation policy (no charge today):\n\n` +
+              `${buildCardOnFileUrl(customerId, booking.id, service.label, displayDate, displayTime, customerName)}\n\n` +
               `Questions? Call or text (602) 688-2578. See you soon ✨`
       });
     }
@@ -2641,7 +2647,7 @@ BOOKING FLOW:
                   body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
                         `📅 ${service.label}\n🕐 ${displayDate} at ${displayTime}\n` +
                         `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
-                        `Please add a card on file for our 24-hour cancellation policy:\n${BOOKING_URL}\n\n` +
+                        `One last step — save a card on file for our 24-hour cancellation policy (no charge today):\n${buildCardOnFileUrl(customerId, booking.id, service.label, displayDate, displayTime, customerName)}\n\n` +
                         `Questions? Text (602) 688-2578. See you soon ✨`
                 });
               }
