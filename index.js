@@ -2665,6 +2665,7 @@ Write ONLY:
     messages: [{ role: 'user', content: prompt }],
   });
 
+  if (!response.content?.[0]?.text) { console.error("[generatePost] Bad response:", JSON.stringify(response)); throw new Error("No text in response: " + JSON.stringify(response?.error || response?.type)); }
   const full     = response.content[0].text.trim();
   const parts    = full.split(/\n\s*\n/);
   const caption  = parts.length > 1 ? parts.slice(0, -1).join('\n\n').trim() : parts[0]?.trim() || full;
