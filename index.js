@@ -2671,6 +2671,7 @@ Write ONLY:
   const hashtags = parts[parts.length - 1]?.startsWith('#')
     ? parts[parts.length - 1].trim()
     : HASHTAGS[slot.pillar] || '';
+  return { caption, hashtags };
 
 }
 
