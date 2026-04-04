@@ -2672,8 +2672,6 @@ Write ONLY:
     ? parts[parts.length - 1].trim()
     : HASHTAGS[slot.pillar] || '';
 
-  return { caption, hashtags };
-}
 }
 
 // ── Search for trending topic ─────────────────────────────────────────────────
@@ -2701,7 +2699,6 @@ Write for a knowledgeable practitioner — specific and accurate.`,
     console.error('[generate-content] Trend research error:', err.message);
     return `RESEARCH CONTEXT: Fascia contains more sensory nerve endings than muscle (Schleip et al.) — making it a primary organ of proprioception and interoception. The lymphatic system processes approximately 3L of fluid daily with no intrinsic pump. The skin microbiome consists of approximately 1000 species and its disruption correlates with systemic inflammatory markers.`;
   }
-}
 }
 
 // ── Get active monthly special from Supabase ──────────────────────────────────
