@@ -2792,7 +2792,7 @@ app.post('/generate-content', async (req, res) => {
             platform:      slot.platform,
             pillar:        slot.pillar,
             post_type:     slot.post_type,
-            title:         slot.theme.split(',')[0].trim(),
+            title:         slot.themePool ? pickTheme(slot.themePool) : (slot.theme || 'Post'),
             status:        'pending_approval',
           }, { onConflict: 'scheduled_for,platform' })
           .select()
