@@ -420,6 +420,40 @@ function buildCardOnFileUrl(customerId, bookingId, service, displayDate, display
   return `${base}?${p.toString()}`;
 }
 
+// ── fireConfirmation — shared helper for all booking paths ───────────────────
+// Calls Railway /confirm-booking which handles:
+//   Supabase client + appointment upsert, booking_tokens, Resend email, Twilio SMS
+// Non-blocking: booking is already confirmed before this runs.
+async function fireConfirmation({ booking, squareCustomerId, serviceName, serviceType,
+                                   durationMins, customer, bookedSource }) {
+  const KAI_URL    = process.env.KAI_WEBHOOK_URL || 'https://awaken-zen-kai-production.up.railway.app';
+  const KAI_SECRET = process.env.CRON_SECRET     || '';
+  try {
+    await fetch(`${KAI_URL}/confirm-booking`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-cron-token': KAI_SECRET,
+      },
+      body: JSON.stringify({
+        squareBookingId:  booking.id,
+        squareCustomerId,
+        serviceName,
+        serviceType:      serviceType || 'massage',
+        durationMins:     durationMins || 60,
+        startAt:          booking.start_at,
+        therapist:        'Brant',
+        locationId:       LOCATION_ID,
+        bookedSource:     bookedSource || 'kai',
+        customer,
+      }),
+    });
+  } catch (err) {
+    // Non-fatal — booking is already confirmed in Square
+    console.error('[fireConfirmation] Failed to reach Railway:', err.message);
+  }
+}
+
 function resolveDate(input) {
   const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Phoenix" }));
@@ -698,21 +732,25 @@ app.post("/book-appointment", async (req, res) => {
       day: "numeric"
     });
 
-    if (customerPhone) {
-      await twilioClient.messages.create({
-        from: TWILIO_NUMBER,
-        to: customerPhone.replace(/[^0-9+]/g,'').replace(/^([0-9]{10})$/,'+1$1'),
-        body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
-              `📅 ${service.label}\n` +
-              `🕐 ${displayDate} at ${displayTime}\n` +
-              `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
-              `One last step — save a card on file for our 24-hour cancellation policy (no charge today):\n\n` +
-              `${buildCardOnFileUrl(customerId, booking.id, service.label, displayDate, displayTime, customerName)}\n\n` +
-              `Questions? Call or text (602) 688-2578. See you soon ✨`
-      });
-    }
+    // Fire full confirmation: Supabase upsert + branded email + SMS with token links
+    // Non-blocking so Vapi response is not delayed
+    fireConfirmation({
+      booking,
+      squareCustomerId: customerId,
+      serviceName:  service.label,
+      serviceType:  'massage',
+      durationMins: parseInt(dur),
+      customer: {
+        firstName:         customerName?.split(" ")[0] || "Guest",
+        lastName:          customerName?.split(" ").slice(1).join(" ") || "",
+        email:             customerEmail  || null,
+        phone:             customerPhone  || null,
+        contactPreference: 'sms',   // Kai voice/SMS clients prefer SMS
+      },
+      bookedSource: 'kai_voice',
+    });
 
-    vapiResponse(res, toolCallId, `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your appointment details and a link to add a card on file for our cancellation policy. We look forward to seeing you at Awaken Zen Spa!`);
+    vapiResponse(res, toolCallId, `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your details and a link to save a card on file. We look forward to seeing you at Awaken Zen Spa!`);
 
   } catch (err) {
     console.error("book-appointment error:", err);
@@ -720,8 +758,10 @@ app.post("/book-appointment", async (req, res) => {
   }
 });
 
-// ── Route: Send booking confirmation SMS manually ─────────────────────────────
-app.post("/send-booking-confirmation", async (req, res) => {
+// ── Route: Send confirmation SMS (Vapi tool endpoint — legacy manual trigger) ──
+// NOTE: Full booking confirmation (email + SMS + Supabase) is handled by
+// the /confirm-booking route mounted at the bottom of this file.
+app.post("/send-confirmation-sms", async (req, res) => {
   const toolCallId = extractToolCallId(req.body);
   try {
     const params = extractParams(req.body);
@@ -3073,20 +3113,25 @@ BOOKING FLOW:
                 timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
               });
 
-              // Send confirmation SMS
-              if (customerPhone) {
-                await twilioClient.messages.create({
-                  from: TWILIO_NUMBER,
-                  to: customerPhone.replace(/[^0-9+]/g,'').replace(/^([0-9]{10})$/,'+1$1'),
-                  body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
-                        `📅 ${service.label}\n🕐 ${displayDate} at ${displayTime}\n` +
-                        `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
-                        `One last step — save a card on file for our 24-hour cancellation policy (no charge today):\n${buildCardOnFileUrl(customerId, booking.id, service.label, displayDate, displayTime, customerName)}\n\n` +
-                        `Questions? Text (602) 688-2578. See you soon ✨`
-                });
-              }
+              // Fire full confirmation: Supabase upsert + branded email + SMS with token links
+              // Non-blocking — chat response is not delayed
+              fireConfirmation({
+                booking,
+                squareCustomerId: customerId,
+                serviceName:  service.label,
+                serviceType:  'massage',
+                durationMins: parseInt(dur),
+                customer: {
+                  firstName:         customerName?.split(" ")[0] || "Guest",
+                  lastName:          customerName?.split(" ").slice(1).join(" ") || "",
+                  email:             customerEmail  || null,
+                  phone:             customerPhone  || null,
+                  contactPreference: 'email',   // Chat widget clients may have either; email safer default
+                },
+                bookedSource: 'kai_chat',
+              });
 
-              toolResult = `BOOKING_CONFIRMED: ${service.label} on ${displayDate} at ${displayTime} for ${customerName}. Confirmation text sent to ${customerPhone}.`;
+              toolResult = `BOOKING_CONFIRMED: ${service.label} on ${displayDate} at ${displayTime} for ${customerName}. Confirmation sent to ${customerPhone || customerEmail}.`;
             }
           }
         }
@@ -3170,6 +3215,9 @@ app.post("/square-webhook-membership",
 );
 
 // ── Booking confirmation — email + SMS + Supabase upsert ──────────────────────
-// Called by Netlify complete-booking.js and square-book.js after Square confirms
+// Called internally via fireConfirmation() from all three booking paths:
+//   1. Vapi voice (book_appointment tool)
+//   2. Kai chat widget (book_appointment tool)
+//   3. Netlify complete-booking.js + square-book.js (via KAI_WEBHOOK_URL)
 const sendBookingConfirmation = require('./routes/send-booking-confirmation');
-app.use('/send-booking-confirmation', sendBookingConfirmation);
+app.use('/confirm-booking', sendBookingConfirmation);
