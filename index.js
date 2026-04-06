@@ -1,4 +1,4 @@
-//v14
+//v15
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Awaken Zen Spa — Kai Webhook Server
@@ -3168,3 +3168,8 @@ app.post("/square-webhook-membership",
   },
   handleMembershipWebhook
 );
+
+// ── Booking confirmation — email + SMS + Supabase upsert ──────────────────────
+// Called by Netlify complete-booking.js and square-book.js after Square confirms
+const sendBookingConfirmation = require('./routes/send-booking-confirmation');
+app.use('/send-booking-confirmation', sendBookingConfirmation);
