@@ -3221,3 +3221,4 @@ app.post("/square-webhook-membership",
 //   3. Netlify complete-booking.js + square-book.js (via KAI_WEBHOOK_URL)
 const sendBookingConfirmation = require('./routes/send-booking-confirmation');
 app.use('/confirm-booking', sendBookingConfirmation);
+
