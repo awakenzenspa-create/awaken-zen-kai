@@ -4,8 +4,6 @@
 // Awaken Zen Spa — Kai Webhook Server
 // Full build: time routing, SMS tools, Square availability + booking
 // Flash Fill: member sync, group management
-// ─────────────────────────────────────────────────────────────────────────────
-
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -13,14 +11,10 @@ const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
 const { renderHtmlToPng }    = require('./jobs/socialImageGen');
 const path = require('path');
-const { renderHtmlToPng }    = require('./jobs/socialImageGen');
-const path = require('path');
 const { createClient } = require("@supabase/supabase-js");
-
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
-app.use('/social-flash/images', express.static(path.join(__dirname, 'public', 'social-images')));
 app.use('/social-flash/images', express.static(path.join(__dirname, 'public', 'social-images')));
 const emailRoutes = require('./email-handler');
 app.use(emailRoutes);
@@ -29,12 +23,9 @@ const twilioClient  = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
 const VAPI_NUMBER     = process.env.VAPI_PHONE_NUMBER;
 const OWNER_CELL      = "+16232196907";
@@ -44,13 +35,11 @@ const LOCATION_ID     = "TMRQ3D20EFD1X";
 const SQUARE_TOKEN    = process.env.SQUARE_ACCESS_TOKEN;
 const SQUARE_BASE     = "https://connect.squareup.com/v2";
 const SQUARE_VERSION  = "2024-01-18";
-
 // ── Team Members ──────────────────────────────────────────────────────────────
 const TEAM_MEMBERS = {
   brant:   { id: "OVUiDLRyxkDxB12f_8w9", name: "Brant" },
   trevor:  { id: "TMvKNbcHqsI4aECK",     name: "Trevor" }
 };
-
 // ── Service Variation IDs for bookable services ───────────────────────────────
 const SERVICES = {
   "european royalty": {
@@ -62,166 +51,71 @@ const SERVICES = {
     }
   },
   "swedish": {
-    label: "European Royalty: Classic Swedish",
-    variations: {
-      "60":  "TIB77G2AIP7GABDSWZFXN6FF",
-      "90":  "QAVQO7BGDYOVEI65CWUCOWY7",
-      "120": "W7KH4DISA5C7BQMNED2OIGKM"
-    }
-  },
   "muscle mender": {
     label: "Muscle Mender: Deep Tissue",
-    variations: {
       "60":  "BIWQQPHXSAC25JHMLKEIYVVV",
       "90":  "F4D4WJDBUV6VPW3NZ5WUPAWA",
       "120": "XP5NCMNL7ZSPKK44GFN46BW3"
-    }
-  },
   "deep tissue": {
-    label: "Muscle Mender: Deep Tissue",
-    variations: {
-      "60":  "BIWQQPHXSAC25JHMLKEIYVVV",
-      "90":  "F4D4WJDBUV6VPW3NZ5WUPAWA",
-      "120": "XP5NCMNL7ZSPKK44GFN46BW3"
-    }
-  },
   "spring senses": {
     label: "Spring Senses: Lymphatic Drainage",
-    variations: {
       "60":  "K2W6NJ6KSTSVZWPKE3L7WIWD",
       "90":  "TIQJY3TSW6ZWJ27X2ENK2LKF",
       "120": "6VULYOQRLLMEWRZBM5DEWVQE"
-    }
-  },
   "lymphatic": {
-    label: "Spring Senses: Lymphatic Drainage",
-    variations: {
-      "60":  "K2W6NJ6KSTSVZWPKE3L7WIWD",
-      "90":  "TIQJY3TSW6ZWJ27X2ENK2LKF",
-      "120": "6VULYOQRLLMEWRZBM5DEWVQE"
-    }
-  },
   "sole symphony": {
     label: "Sole Symphony: Ashiatsu Barefoot Massage",
-    variations: {
       "60":  "P347T32CDIANCUFTNRFR573O",
       "90":  "Q5RG75PJSA432POINYAKY24A",
       "120": "73Z3KGC536LSV32TXW6XP4AW"
-    }
-  },
   "ashiatsu": {
-    label: "Sole Symphony: Ashiatsu Barefoot Massage",
-    variations: {
-      "60":  "P347T32CDIANCUFTNRFR573O",
-      "90":  "Q5RG75PJSA432POINYAKY24A",
-      "120": "73Z3KGC536LSV32TXW6XP4AW"
-    }
-  },
   "warm stone": {
     label: "Warm Stone Retreat",
-    variations: {
       "90":  "6XAXNAZIE3MDEZBLB3GD5UYU",
       "120": "K7XIEBQ2DTYB4YF5TCHLNMXJ"
-    }
-  },
   "hot stone": {
-    label: "Warm Stone Retreat",
-    variations: {
-      "90":  "6XAXNAZIE3MDEZBLB3GD5UYU",
-      "120": "K7XIEBQ2DTYB4YF5TCHLNMXJ"
-    }
-  },
   "luxury spa": {
     label: "Luxury Spa Experience",
-    variations: {
       "120": "TIC4IYJZHISU4ZCBHZIYKTUT"
-    }
-  },
   "head scalp": {
     label: "Radiant Head & Scalp Experience",
-    variations: {
       "120": "ZQQHCBPQNW2HCHKYW7HQ3VWX"
-    }
-  },
   "radiant head": {
-    label: "Radiant Head & Scalp Experience",
-    variations: {
-      "120": "ZQQHCBPQNW2HCHKYW7HQ3VWX"
-    }
-  },
   "calm and clear": {
     label: "Calm and Clear: Relaxation Facial",
-    variations: {
       "60": "HAAWAKV7TD7L6OD27CNZ2A33",
       "90": "UUNTT5FDE6MYNJGEMLEB7STI"
-    }
-  },
   "relaxation facial": {
-    label: "Calm and Clear: Relaxation Facial",
-    variations: {
-      "60": "HAAWAKV7TD7L6OD27CNZ2A33",
-      "90": "UUNTT5FDE6MYNJGEMLEB7STI"
-    }
-  },
   "youthful glow": {
     label: "Youthful Glow: Anti-Aging Facial",
-    variations: {
       "60": "LAEOGJ23JVQGXQ2SD4UWECJV",
       "90": "33L2RRNH6UCPWLUTEZFRHTEM"
-    }
-  },
   "anti aging": {
-    label: "Youthful Glow: Anti-Aging Facial",
-    variations: {
-      "60": "LAEOGJ23JVQGXQ2SD4UWECJV",
-      "90": "33L2RRNH6UCPWLUTEZFRHTEM"
-    }
-  },
   "microdermabrasion": {
     label: "Micro-Dermabrasion Treatment",
-    variations: {
       "60": "4LWHUA7X53NZFBT3FB54J272",
       "90": "SYT7F6KBIPDXRN5KFXCKWE5U"
-    }
-  },
   "microderm": {
-    label: "Micro-Dermabrasion Treatment",
-    variations: {
-      "60": "4LWHUA7X53NZFBT3FB54J272",
-      "90": "SYT7F6KBIPDXRN5KFXCKWE5U"
-    }
-  },
   "dermaplane": {
     label: "Dermaplane Treatment",
-    variations: {
       "60": "DQVFGWUDTDG3ID5VDHD2FORT",
       "90": "EG3TALRSZNFYB6FIURQ6URS6"
-    }
-  },
   "microneedling": {
     label: "Micro-Needling Treatment",
-    variations: {
       "60": "3DYWCG6NEV3PBAUXHMNYWT4V"
-    }
-  },
   "waxing brows": {
     label: "Waxing - Brows",
     variations: { "20": "KXXXZFA5YVEKGKFEF2I2PWUZ" }
-  },
   "waxing lip": {
     label: "Waxing - Lip & Chin",
     variations: { "15": "CPBUQUO4JTD24G5ULN2AE7WW" }
-  },
   "full face wax": {
     label: "Full Face Wax",
     variations: { "30": "ILEAGQTQEJMAP7KJH527CHUA" }
-  },
   "brow lamination": {
     label: "Brow Lamination",
     variations: { "45": "UMOB6VGE2XHHMX3S3AYVG4SX" }
   }
-};
-
 function getServiceDescription(serviceName) {
   const descriptions = {
     'European Royalty: Classic Swedish':        'A full-body ritual of warmth, pressure, and restoration.',
@@ -234,7 +128,6 @@ function getServiceDescription(serviceName) {
   };
   return descriptions[serviceName] || 'A deeply restorative treatment at Awaken Zen Spa.';
 }
-
 // ── Square API helper ─────────────────────────────────────────────────────────
 async function squareRequest(method, path, body = null) {
   const opts = {
@@ -243,44 +136,28 @@ async function squareRequest(method, path, body = null) {
       "Square-Version": SQUARE_VERSION,
       "Authorization": `Bearer ${SQUARE_TOKEN}`,
       "Content-Type": "application/json"
-    }
-  };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${SQUARE_BASE}${path}`, opts);
   return res.json();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FLASH FILL — Member Sync
-// ─────────────────────────────────────────────────────────────────────────────
-
 async function runMemberSync() {
   const log = makeSyncLogger();
   log.info("Member sync started");
-
   try {
     const subscriptions = await fetchAllSubscriptions(log);
     log.info(`Fetched ${subscriptions.length} subscriptions from Square`);
-
     if (subscriptions.length === 0) {
       log.info("No subscriptions found");
       return { synced: 0, clientsUpdated: 0, flagsUpdated: 0 };
-    }
-
     const enriched       = await resolveClientIds(subscriptions, log);
     const synced         = await upsertMemberSync(enriched, log);
     const clientsUpdated = await updateClientsTable(enriched, log);
     const flagsUpdated   = await syncMemberFlags(log);
-
     log.info(`Done — ${synced} subscriptions | ${clientsUpdated} clients | ${flagsUpdated} flags`);
     return { synced, clientsUpdated, flagsUpdated, log: log.entries };
-
   } catch (err) {
     log.error(`Member sync failed: ${err.message}`);
     throw err;
-  }
-}
-
 async function fetchAllSubscriptions(log) {
   const subscriptions = [];
   let cursor = null;
@@ -301,29 +178,20 @@ async function fetchAllSubscriptions(log) {
     log.info(`  Batch: ${data.subscriptions?.length || 0} (total: ${subscriptions.length})`);
   } while (cursor);
   return subscriptions;
-}
-
 async function resolveClientIds(subscriptions, log) {
   const squareIds = [...new Set(subscriptions.map(s => s.customer_id).filter(Boolean))];
   const { data: clients, error } = await supabase
     .from("clients")
     .select("id, square_customer_id")
     .in("square_customer_id", squareIds);
-
   if (error) {
     log.warn(`Client lookup failed: ${error.message}`);
     return subscriptions.map(s => ({ ...s, client_id: null }));
-  }
-
   const clientMap = {};
   (clients || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
-
   const unresolved = squareIds.filter(id => !clientMap[id]);
   if (unresolved.length > 0) log.warn(`${unresolved.length} Square IDs not found in clients table`);
-
   return subscriptions.map(s => ({ ...s, client_id: clientMap[s.customer_id] || null }));
-}
-
 async function upsertMemberSync(subscriptions, log) {
   const allRows = subscriptions.map(s => ({
     square_customer_id:  s.customer_id,
@@ -334,7 +202,6 @@ async function upsertMemberSync(subscriptions, log) {
     square_cancelled_at: s.canceled_date ? new Date(s.canceled_date).toISOString() : null,
     synced_at:           new Date().toISOString()
   }));
-
   // Dedup by square_customer_id — keep active over cancelled, then most recent start date
   const deduped = Object.values(
     allRows.reduce((acc, row) => {
@@ -350,60 +217,43 @@ async function upsertMemberSync(subscriptions, log) {
       return acc;
     }, {})
   );
-
   if (allRows.length !== deduped.length) {
     log.info(`Deduped ${allRows.length} subscriptions to ${deduped.length} unique customers`);
-  }
-
   const { error } = await supabase
     .from("square_member_sync")
     .upsert(deduped, { onConflict: "square_customer_id" });
   if (error) throw new Error(`square_member_sync upsert error: ${error.message}`);
   log.info(`Upserted ${deduped.length} rows into square_member_sync`);
   return deduped.length;
-}
-
 async function updateClientsTable(subscriptions, log) {
   const matched     = subscriptions.filter(s => s.client_id);
   const activeIds   = matched.filter(s => normalizeMemberStatus(s.status) === "active").map(s => s.client_id);
   const inactiveIds = matched.filter(s => normalizeMemberStatus(s.status) !== "active").map(s => s.client_id);
   let updated = 0;
-
   if (activeIds.length > 0) {
     const { error } = await supabase.from("clients")
       .update({ membership_active: true, updated_at: new Date().toISOString() })
       .in("id", activeIds);
     if (error) log.warn(`Active update error: ${error.message}`);
     else updated += activeIds.length;
-  }
   if (inactiveIds.length > 0) {
-    const { error } = await supabase.from("clients")
       .update({ membership_active: false, updated_at: new Date().toISOString() })
       .in("id", inactiveIds);
     if (error) log.warn(`Inactive update error: ${error.message}`);
     else updated += inactiveIds.length;
-  }
-
   log.info(`Updated membership_active on ${updated} clients`);
   return updated;
-}
-
 async function syncMemberFlags(log) {
   const { data, error } = await supabase.rpc("sync_member_exclusions");
   if (error) throw new Error(`sync_member_exclusions() failed: ${error.message}`);
   log.info(`sync_member_exclusions() flipped ${data} flash_group_members flags`);
   return data;
-}
-
 function normalizeMemberStatus(squareStatus) {
   const map = {
     "ACTIVE": "active", "PENDING": "active",
     "PAUSED": "paused", "SUSPENDED": "paused",
     "CANCELED": "cancelled", "DEACTIVATED": "cancelled"
-  };
   return map[squareStatus] || "cancelled";
-}
-
 function makeSyncLogger() {
   const entries = [];
   const stamp = () => new Date().toISOString();
@@ -412,20 +262,12 @@ function makeSyncLogger() {
     info:  (msg) => { const e = `[INFO]  ${stamp()} ${msg}`; entries.push(e); console.log(e); },
     warn:  (msg) => { const e = `[WARN]  ${stamp()} ${msg}`; entries.push(e); console.warn(e); },
     error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Member Sync
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ── Format date helper ────────────────────────────────────────────────────────
 function buildCardOnFileUrl(customerId, bookingId, service, displayDate, displayTime, customerName) {
   const base = "https://awakenzenspa.com/save-card";
   const p = new URLSearchParams({ customer: customerId, booking: bookingId || "", service: service || "", date: displayDate || "", time: displayTime || "", name: customerName || "" });
   return `${base}?${p.toString()}`;
-}
-
 // ── fireConfirmation — shared helper for all booking paths ───────────────────
 // Calls Railway /confirm-booking which handles:
 //   Supabase client + appointment upsert, booking_tokens, Resend email, Twilio SMS
@@ -435,13 +277,10 @@ async function fireConfirmation({ booking, squareCustomerId, serviceName, servic
   const KAI_URL    = process.env.KAI_WEBHOOK_URL || 'https://awaken-zen-kai-production.up.railway.app';
   const KAI_SECRET = process.env.CRON_SECRET     || '';
   const therapist  = (serviceType === 'facial' || serviceType === 'head_spa') ? 'Trevor' : 'Brant';
-  try {
     await fetch(`${KAI_URL}/confirm-booking`, {
       method:  'POST',
-      headers: {
         'Content-Type': 'application/json',
         'x-cron-token': KAI_SECRET,
-      },
       body: JSON.stringify({
         squareBookingId:  booking.id,
         squareCustomerId,
@@ -454,40 +293,25 @@ async function fireConfirmation({ booking, squareCustomerId, serviceName, servic
         bookedSource:     bookedSource || 'kai',
         customer,
       }),
-    });
-  } catch (err) {
     // Non-fatal — booking is already confirmed in Square
     console.error('[fireConfirmation] Failed to reach Railway:', err.message);
-  }
-}
-
 function resolveDate(input) {
   const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Phoenix" }));
   const today = now.getDay();
   const lower = input.toLowerCase().trim();
-
   if (lower === "today") return now;
   if (lower === "tomorrow") {
     const d = new Date(now); d.setDate(d.getDate() + 1); return d;
-  }
-
   const dayIdx = days.indexOf(lower);
   if (dayIdx !== -1) {
     const diff = (dayIdx - today + 7) % 7 || 7;
     const d = new Date(now); d.setDate(d.getDate() + diff); return d;
-  }
-
   const parsed = new Date(input);
   if (!isNaN(parsed)) return parsed;
-
   return null;
-}
-
 function formatDateForSquare(date) {
   return date.toISOString().split("T")[0];
-}
-
 function formatTimeForDisplay(isoString) {
   const d = new Date(isoString);
   return d.toLocaleTimeString("en-US", {
@@ -496,16 +320,12 @@ function formatTimeForDisplay(isoString) {
     minute: "2-digit",
     hour12: true
   });
-}
-
 // ── Time-based routing ────────────────────────────────────────────────────────
 function isLiveWindow() {
   const now = new Date();
   const azTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Phoenix" }));
   const total = azTime.getHours() * 60 + azTime.getMinutes();
   return total >= 480 && total < 570;
-}
-
 // ── Route: Inbound call ───────────────────────────────────────────────────────
 app.post("/incoming", (req, res) => {
   const twiml = new VoiceResponse();
@@ -515,47 +335,27 @@ app.post("/incoming", (req, res) => {
   } else {
     const dial = twiml.dial({ timeout: 30, action: "/no-answer" });
     dial.number(VAPI_NUMBER);
-  }
   res.type("text/xml");
   res.send(twiml.toString());
 });
-
 // ── Route: No answer fallback ─────────────────────────────────────────────────
 app.post("/no-answer", (req, res) => {
-  const twiml = new VoiceResponse();
   if (req.body.DialCallStatus !== "completed" && req.body.DialCallStatus !== "answered") {
     const dial = twiml.dial();
-    dial.number(VAPI_NUMBER);
-  }
-  res.type("text/xml");
-  res.send(twiml.toString());
-});
-
 // ── Route: Whisper ────────────────────────────────────────────────────────────
 app.post("/whisper", (req, res) => {
-  res.type("text/xml");
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response><Say voice="alice">Awaken Zen Spa call.</Say></Response>`);
-});
-
 // ── Helper: extract tool parameters ──────────────────────────────────────────
 function extractParams(body) {
   if (body.phoneNumber || body.serviceKey || body.date) return body;
-  try {
     const args = body?.message?.toolCallList?.[0]?.function?.arguments;
     if (args) return typeof args === "string" ? JSON.parse(args) : args;
   } catch (e) {}
-  try {
     const args = body?.message?.toolCalls?.[0]?.function?.arguments;
-    if (args) return typeof args === "string" ? JSON.parse(args) : args;
-  } catch (e) {}
-  try {
     const params = body?.message?.functionCall?.parameters;
     if (params) return typeof params === "string" ? JSON.parse(params) : params;
-  } catch (e) {}
   return body;
-}
-
 // ── Helper: extract toolCallId ────────────────────────────────────────────────
 function extractToolCallId(body) {
   return body?.message?.toolCallList?.[0]?.id ||
@@ -563,81 +363,47 @@ function extractToolCallId(body) {
          body?.message?.functionCall?.id ||
          body?.toolCallId ||
          "unknown";
-}
-
 // ── Helper: format response for Vapi ─────────────────────────────────────────
 function vapiResponse(res, toolCallId, resultText) {
   const singleLine = String(resultText).replace(/\n/g, " ").replace(/\r/g, "");
   res.json({ results: [{ toolCallId, result: singleLine }] });
-}
-
 // ── Route: Send Booking Link ──────────────────────────────────────────────────
 app.post("/send-booking-link", async (req, res) => {
   const toolCallId = extractToolCallId(req.body);
-  try {
     const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number || params.to;
     if (!phoneNumber) {
       return vapiResponse(res, toolCallId, "Booking link ready — please ask the caller for their phone number to send the link.");
-    }
     await twilioClient.messages.create({
       from: TWILIO_NUMBER,
       to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Here's your booking link:\n\n${BOOKING_URL}\n\nSee you soon ✨`
-    });
     vapiResponse(res, toolCallId, "Booking link sent successfully.");
-  } catch (err) {
     console.error("sendBookingLink error:", err.message);
     vapiResponse(res, toolCallId, "Failed to send booking link.");
-  }
-});
-
 // ── Route: Send Gift Card Link ────────────────────────────────────────────────
 app.post("/send-gift-card-link", async (req, res) => {
-  const toolCallId = extractToolCallId(req.body);
-  try {
-    const params = extractParams(req.body);
-    const phoneNumber = params.phoneNumber || params.phone_number || params.to;
-    if (!phoneNumber) {
       return vapiResponse(res, toolCallId, "Gift card link ready — please ask the caller for their phone number.");
-    }
-    await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
-      to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Gift cards available here:\n\n${GIFT_CARD_URL}\n\nA beautiful gift ✨`
-    });
     vapiResponse(res, toolCallId, "Gift card link sent successfully.");
-  } catch (err) {
     console.error("sendGiftCardLink error:", err.message);
     vapiResponse(res, toolCallId, "Failed to send gift card link.");
-  }
-});
-
 // ── Route: Check Availability ─────────────────────────────────────────────────
 app.post("/check-availability", async (req, res) => {
-  const toolCallId = extractToolCallId(req.body);
-  try {
     const { serviceKey, duration, date } = extractParams(req.body);
-
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
     if (!service) {
       return vapiResponse(res, toolCallId, "I wasn't able to find that service. Could you clarify which service you're interested in?");
-    }
-
     const dur = String(duration || "60");
     const variationId = service.variations[dur];
     if (!variationId) {
       const available = Object.keys(service.variations).join(", ");
       return vapiResponse(res, toolCallId, `${service.label} is available in ${available} minute sessions.`);
-    }
-
     const resolved = resolveDate(date || "tomorrow");
     if (!resolved) {
       return vapiResponse(res, toolCallId, "I couldn't determine that date — could you clarify?");
-    }
     const dateStr = formatDateForSquare(resolved);
-
     const data = await squareRequest("POST", "/bookings/availability/search", {
       query: {
         filter: {
@@ -655,40 +421,20 @@ app.post("/check-availability", async (req, res) => {
             }
           ]
         }
-      }
-    });
-
     const slots = data.availabilities || [];
     if (slots.length === 0) {
       return vapiResponse(res, toolCallId, `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`);
-    }
-
     const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
     const timeList = uniqueTimes.join(", ");
     const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-
     vapiResponse(res, toolCallId, `For ${service.label} (${dur} min) on ${dateDisplay}, we have availability at: ${timeList}. Which time works best for you?`);
-
-  } catch (err) {
     console.error("check-availability error:", err);
     vapiResponse(res, toolCallId, "I had trouble checking availability. Would you like me to send you our booking link instead?");
-  }
-});
-
 // ── Route: Book Appointment ───────────────────────────────────────────────────
 app.post("/book-appointment", async (req, res) => {
-  const toolCallId = extractToolCallId(req.body);
-  try {
     const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = extractParams(req.body);
-
-    const svcKey = (serviceKey || "").toLowerCase();
-    const service = SERVICES[svcKey];
     if (!service) return vapiResponse(res, toolCallId, "Service not found.");
-
-    const dur = String(duration || "60");
-    const variationId = service.variations[dur];
     if (!variationId) return vapiResponse(res, toolCallId, "Duration not available for this service.");
-
     let customerId = null;
     if (customerPhone || customerEmail) {
       const searchRes = await squareRequest("POST", "/customers/search", {
@@ -704,9 +450,6 @@ app.post("/book-appointment", async (req, res) => {
           email_address: customerEmail
         });
         customerId = createRes.customer?.id;
-      }
-    }
-
     const bookingRes = await squareRequest("POST", "/bookings", {
       booking: {
         location_id: LOCATION_ID,
@@ -721,15 +464,10 @@ app.post("/book-appointment", async (req, res) => {
             team_member_id: TEAM_MEMBERS.brant.id
           }
         ]
-      },
       idempotency_key: `kai-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
-    });
-
     if (bookingRes.errors) {
       console.error("Booking error:", bookingRes.errors);
       return vapiResponse(res, toolCallId, "I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.");
-    }
-
     const booking = bookingRes.booking;
     const displayTime = formatTimeForDisplay(booking.start_at);
     const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
@@ -737,8 +475,6 @@ app.post("/book-appointment", async (req, res) => {
       weekday: "long",
       month: "long",
       day: "numeric"
-    });
-
     // Fire full confirmation: Supabase upsert + branded email + SMS with token links
     // Non-blocking so Vapi response is not delayed
     fireConfirmation({
@@ -753,119 +489,66 @@ app.post("/book-appointment", async (req, res) => {
         email:             customerEmail  || null,
         phone:             customerPhone  || null,
         contactPreference: 'sms',   // Kai voice/SMS clients prefer SMS
-      },
       bookedSource: 'kai_voice',
-    });
-
     vapiResponse(res, toolCallId, `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your details and a link to save a card on file. We look forward to seeing you at Awaken Zen Spa!`);
-
-  } catch (err) {
     console.error("book-appointment error:", err);
     vapiResponse(res, toolCallId, "I had trouble completing that booking. Let me send you our booking link instead.");
-  }
-});
-
 // ── Route: Send confirmation SMS (Vapi tool endpoint — legacy manual trigger) ──
 // NOTE: Full booking confirmation (email + SMS + Supabase) is handled by
 // the /confirm-booking route mounted at the bottom of this file.
 app.post("/send-confirmation-sms", async (req, res) => {
-  const toolCallId = extractToolCallId(req.body);
-  try {
-    const params = extractParams(req.body);
     const phoneNumber = params.phoneNumber || params.phone_number;
     const appointmentDetails = params.appointmentDetails || params.appointment_details;
-    await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
-      to: phoneNumber,
       body: `Hi! Your Awaken Zen Spa appointment is confirmed.\n\n${appointmentDetails}\n\nPlease add a card on file:\n${BOOKING_URL}\n\nQuestions? (602) 688-2578 ✨`
-    });
     vapiResponse(res, toolCallId, "Confirmation sent.");
-  } catch (err) {
     vapiResponse(res, toolCallId, "Failed to send confirmation.");
-  }
-});
-
 // ── Route: Vapi Server Message ────────────────────────────────────────────────
 app.post("/vapi-message", (req, res) => {
   const msg = req.body?.message;
-
   if (msg?.type === "assistant-request") {
     const now = new Date();
     const azOptions = { timeZone: "America/Phoenix" };
     const azDate = now.toLocaleDateString("en-US", {
       ...azOptions,
-      weekday: "long",
       year: "numeric",
-      month: "long",
-      day: "numeric"
-    });
     const azTime = now.toLocaleTimeString("en-US", {
-      ...azOptions,
       hour: "numeric",
       minute: "2-digit",
       hour12: true
-    });
-
     return res.json({
       assistant: {
         firstMessage: `Thank you for calling Awaken Zen Spa, this is Kai — how can I take care of you today?`,
         model: {
           messages: [
-            {
               role: "system",
               content: `CURRENT DATE AND TIME (Arizona / America/Phoenix timezone, UTC-7, no DST):
 Today is ${azDate}.
 Current time is ${azTime}.
-
 Use this to resolve any relative date the caller mentions:
 - "tomorrow" = the day after ${azDate}
 - "next [weekday]" = the upcoming occurrence of that weekday after today
 - "this [weekday]" = the nearest upcoming occurrence
 - Never ask the caller what day it is. You always know.`
-            }
-          ]
-        }
-      }
-    });
-  }
-
   res.json({});
-});
-
 // ── Route: Square diagnostic ──────────────────────────────────────────────────
 app.get("/square-info", async (req, res) => {
-  try {
     const teamRes = await squareRequest("POST", "/team-members/search", {
       query: { filter: { location_ids: [LOCATION_ID], status: "ACTIVE" } }
-    });
     res.json({ team: teamRes.team_members?.map(m => ({ name: `${m.given_name} ${m.family_name}`, id: m.id })) });
-  } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SMS AI SYSTEM — Kai text concierge
-// ─────────────────────────────────────────────────────────────────────────────
-
 const smsConversations = new Map();
 const SMS_MAX_HISTORY = 20;
-
 function getConversation(phone) {
   if (!smsConversations.has(phone)) smsConversations.set(phone, []);
   return smsConversations.get(phone);
-}
-
 function addToConversation(phone, role, content) {
   const convo = getConversation(phone);
   convo.push({ role, content });
   if (convo.length > SMS_MAX_HISTORY) convo.splice(0, convo.length - SMS_MAX_HISTORY);
-}
-
 async function getUpcomingBookings(phoneNumber) {
   const customerRes = await squareRequest("POST", "/customers/search", {
     query: { filter: { phone_number: { exact: phoneNumber } } }
-  });
   if (!customerRes.customers?.length) return [];
   const customerId = customerRes.customers[0].id;
   const now = new Date().toISOString();
@@ -873,66 +556,41 @@ async function getUpcomingBookings(phoneNumber) {
   const bookingsRes = await squareRequest("POST", "/bookings/search", {
     query: {
       filter: {
-        location_id: LOCATION_ID,
         customer_id_filter: { customer_ids: [customerId] },
         start_at_range: { start_at: now, end_at: future }
-      }
-    }
-  });
   return bookingsRes.bookings || [];
-}
-
 async function cancelBooking(bookingId, version) {
   return squareRequest("POST", `/bookings/${bookingId}/cancel`, {
     booking_version: version,
     idempotency_key: `cancel-${bookingId}-${Date.now()}`
-  });
-}
-
 function formatBookingForDisplay(booking) {
   const dt = new Date(booking.start_at);
   const date = dt.toLocaleDateString("en-US", {
     timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
-  });
   const time = dt.toLocaleTimeString("en-US", {
     timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
-  });
   return `${date} at ${time}`;
-}
-
 function buildSmsSystemPrompt(clientPhone, flashOfferContext = null) {
-  const now = new Date();
   const azDate = now.toLocaleDateString("en-US", {
     timeZone: "America/Phoenix", weekday: "long", year: "numeric", month: "long", day: "numeric"
-  });
   const azTime = now.toLocaleTimeString("en-US", {
-    timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
-  });
-
   return `You are Kai, the front desk concierge at Awaken Zen Spa in Mesa, Arizona. You are responding via SMS/text message. Keep responses warm, concise, and conversational — this is a text exchange, not a phone call. Use short paragraphs. Never use markdown formatting like ** or ##.
-
 Today is ${azDate}. Current time is ${azTime} Arizona time.
-
 The client's phone number is ${clientPhone}. You can use this to look up their appointments.
-
 ${flashOfferContext || ''}
-
 BUSINESS DETAILS:
 Awaken Zen Spa — 2830 E Brown Rd Suite 10, Mesa AZ 85213
 Hours: Daily 8AM-8PM, by appointment only
 Phone: (602) 688-2578
 Booking: ${BOOKING_URL}
-
 CANCELLATION POLICY:
 24 hours notice required. Less than 24 hours = $25 fee. Always mention this when someone wants to cancel.
-
 WHAT YOU CAN DO OVER TEXT:
 1. Answer questions about services, pricing, hours, location
 2. Check availability and quote open times
 3. Help reschedule or cancel appointments
 4. Send booking link for new appointments
 5. Look up their upcoming appointments
-
 RESCHEDULING FLOW:
 When someone wants to reschedule:
 1. First acknowledge warmly
@@ -942,7 +600,6 @@ When someone wants to reschedule:
 5. Use [CANCEL_BOOKING: bookingId|version] to cancel old
 6. Use [BOOK_APPOINTMENT: service|duration|isoDateTime|name|phone] to book new
 7. Send confirmation
-
 CANCELLATION FLOW:
 When someone wants to cancel:
 1. Look up their booking using [GET_BOOKINGS]
@@ -951,14 +608,12 @@ When someone wants to cancel:
 4. Ask them to confirm: "Just to confirm — you'd like to cancel your [service] on [date]?"
 5. After confirmation, use [CANCEL_BOOKING: bookingId|version]
 6. Confirm cancellation and express hope to see them soon
-
 ACTION COMMANDS (use these in your response when needed):
 [GET_BOOKINGS] — look up client's upcoming appointments
 [CHECK_AVAILABILITY: serviceKey|duration|date] — check open slots
 [BOOK_APPOINTMENT: serviceKey|duration|isoDateTime|customerName|customerPhone] — create booking
 [CANCEL_BOOKING: bookingId|version] — cancel a booking
 [SEND_BOOKING_LINK] — send the booking link via text
-
 SERVICES (common ones):
 swedish/european royalty: 60/90/120 min — $85/$115/$145
 deep tissue/muscle mender: 60/90/120 min — $85/$115/$145
@@ -970,14 +625,11 @@ anti aging/youthful glow facial: 60/90 min — $85/$115
 microdermabrasion: 60/90 min — $95/$125
 dermaplane: 60/90 min — $100/$130
 microneedling: 60 min — $130
-
 TONE:
 - Warm and personal, like a trusted front desk person
 - Brief — this is text, not email
 - Never say "No problem" — say "Of course" or "Absolutely"
 - Sign off warmly on first message: "— Kai at Awaken Zen"`;
-}
-
 async function processActions(responseText, clientPhone, clientName) {
   let finalText = responseText;
   const actions = [];
@@ -985,20 +637,15 @@ async function processActions(responseText, clientPhone, clientName) {
   let match;
   while ((match = actionRegex.exec(responseText)) !== null) {
     actions.push({ full: match[0], name: match[1], args: match[2]?.split("|") || [] });
-  }
-
   for (const action of actions) {
     try {
       let result = "";
-
       if (action.name === "GET_BOOKINGS") {
         const bookings = await getUpcomingBookings(clientPhone);
         result = bookings.length === 0
           ? "No upcoming appointments found for this number."
           : bookings.map((b, i) => `${i + 1}. ${formatBookingForDisplay(b)} (ID: ${b.id}, v${b.version})`).join("\n");
         finalText = finalText.replace(action.full, `[Bookings found: ${result}]`);
-      }
-
       else if (action.name === "CHECK_AVAILABILITY") {
         const [svcKey, dur, date] = action.args;
         const service = SERVICES[(svcKey || "").toLowerCase().trim()];
@@ -1028,12 +675,7 @@ async function processActions(responseText, clientPhone, clientName) {
               result = slots.length === 0
                 ? "No availability on that day."
                 : `Available: ${uniqueTimes.join(", ")}. Slots: ${JSON.stringify(slots.slice(0, 6).map(s => s.start_at))}`;
-            }
-          }
-        }
         finalText = finalText.replace(action.full, `[Availability: ${result}]`);
-      }
-
       else if (action.name === "CANCEL_BOOKING") {
         const [bookingId, version] = action.args;
         const cancelRes = await cancelBooking(bookingId, parseInt(version) || 0);
@@ -1046,16 +688,9 @@ async function processActions(responseText, clientPhone, clientName) {
             to: OWNER_CELL,
             body: `📋 AZS: Kai cancelled booking ${bookingId} for ${clientPhone} via SMS.`
           });
-        }
         finalText = finalText.replace(action.full, `[Cancel result: ${result}]`);
-      }
-
       else if (action.name === "BOOK_APPOINTMENT") {
         const [svcKey, dur, isoDateTime, name, phone] = action.args;
-        const service = SERVICES[(svcKey || "").toLowerCase().trim()];
-        if (service) {
-          const variationId = service.variations[dur || "60"];
-          if (variationId) {
             let customerId = null;
             const searchRes = await squareRequest("POST", "/customers/search", {
               query: { filter: { phone_number: { exact: phone || clientPhone } } }
@@ -1066,9 +701,7 @@ async function processActions(responseText, clientPhone, clientName) {
                 given_name: (name || "Guest").split(" ")[0],
                 family_name: (name || "").split(" ").slice(1).join(" "),
                 phone_number: phone || clientPhone
-              });
               customerId = createRes.customer?.id;
-            }
             const bookingRes = await squareRequest("POST", "/bookings", {
               booking: {
                 location_id: LOCATION_ID,
@@ -1083,27 +716,18 @@ async function processActions(responseText, clientPhone, clientName) {
                 }]
               },
               idempotency_key: `sms-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
-            });
             if (bookingRes.errors) {
               result = `Error: ${bookingRes.errors[0]?.detail || "Could not book"}`;
             } else {
               const booking = bookingRes.booking;
               result = `Booked! ${service.label} on ${formatBookingForDisplay(booking)}. ID: ${booking.id}`;
-            }
-          }
-        }
         finalText = finalText.replace(action.full, `[Booking result: ${result}]`);
-      }
-
       else if (action.name === "SEND_BOOKING_LINK") {
         await twilioClient.messages.create({
           from: TWILIO_NUMBER,
           to: clientPhone,
           body: `Here's the Awaken Zen Spa booking link:\n${BOOKING_URL}`
-        });
         finalText = finalText.replace(action.full, "[Booking link sent]");
-      }
-
       else if (action.name === "CLAIM_FLASH") {
         // Silently mark flash offer as filled after Kai books it
         const [offerId] = action.args;
@@ -1120,28 +744,17 @@ async function processActions(responseText, clientPhone, clientName) {
             await supabase.from("flash_group_members")
               .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
               .eq("client_id", clientRow.id);
-          }
           console.log(`Flash offer ${offerId} claimed via Kai SMS by ${clientPhone}`);
-        }
         finalText = finalText.replace(action.full, "");
-      }
-
     } catch (err) {
       console.error(`SMS action ${action.name} error:`, err.message);
       finalText = finalText.replace(action.full, `[Action failed: ${err.message}]`);
-    }
-  }
-
   return finalText;
-}
-
 async function getKaiSmsResponse(clientPhone, userMessage, clientName, flashOfferContext = null) {
   const history = getConversation(clientPhone);
   const messages = [...history, { role: "user", content: userMessage }];
-
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
       "Content-Type": "application/json",
       "x-api-key": process.env.ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01"
@@ -1152,34 +765,23 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName, flashOffe
       system: buildSmsSystemPrompt(clientPhone, flashOfferContext),
       messages
     })
-  });
-
   const data = await response.json();
   return data.content?.[0]?.text || "I'm sorry, I had trouble with that. Please call us at (602) 688-2578.";
-}
-
 // ── Route: Incoming SMS ───────────────────────────────────────────────────────
 app.post("/incoming-sms", async (req, res) => {
   const twiml = new twilio.twiml.MessagingResponse();
-
-  try {
     const incomingMsg = req.body.Body?.trim();
     const clientPhone = req.body.From;
     const clientName  = req.body.FromCity || "";
-
     if (!incomingMsg || !clientPhone) {
       twiml.message("Hi! You've reached Awaken Zen Spa. How can Kai help you today?");
       return res.type("text/xml").send(twiml.toString());
-    }
-
     console.log(`SMS from ${clientPhone}: ${incomingMsg}`);
-
     // ── Flash offer claim detection ───────────────────────────────────────────
     // If client replies YES (or similar), check for an active flash offer
     // and inject offer context so Kai can book it directly
     let flashOfferContext = null;
     const isAffirmative = /^(yes|yeah|yep|yup|ok|okay|sure|book it|i'll take it|claim|do it|absolutely|sounds good|perfect|let's do it)/i.test(incomingMsg.trim());
-
     if (isAffirmative) {
       try {
         // Find active flash offer sent within last 4 hours
@@ -1190,14 +792,11 @@ app.post("/incoming-sms", async (req, res) => {
           .gt("claim_deadline", new Date().toISOString())
           .order("created_at", { ascending: false })
           .limit(1);
-
         if (activeOffers && activeOffers.length > 0) {
           const offer = activeOffers[0];
           const slotDisplay = new Date(offer.slot_start).toLocaleString("en-US", {
             timeZone: "America/Phoenix", weekday: "long", month: "long",
             day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
-          });
-
           // Map service name to Kai's serviceKey format
           const serviceKeyMap = {
             "european royalty: classic swedish": "european royalty",
@@ -1209,7 +808,6 @@ app.post("/incoming-sms", async (req, res) => {
             "youthful glow: anti-aging facial": "youthful glow",
           };
           const serviceKey = serviceKeyMap[offer.service_name?.toLowerCase()] || offer.service_name;
-
           flashOfferContext = `
 ⚡ FLASH OFFER ACTIVE — Client is replying to a flash offer SMS:
 Offer ID: ${offer.id}
@@ -1219,7 +817,6 @@ Start ISO: ${offer.slot_start}
 Flash Price: $${offer.discount_price}${offer.addon_offered ? `
 Complimentary add-on: ${offer.addon_offered}` : ""}
 Offer expires: ${new Date(offer.claim_deadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}
-
 INSTRUCTIONS:
 1. Warmly confirm you got their YES and tell them the slot details
 2. Ask for their name if you don't already know it from conversation history
@@ -1227,25 +824,16 @@ INSTRUCTIONS:
 4. After booking succeeds, include [CLAIM_FLASH:${offer.id}] silently in your response — do not show this to the client, it just marks the offer as filled
 5. Confirm the booking warmly and mention the flash price of $${offer.discount_price}${offer.addon_offered ? ` plus their complimentary ${offer.addon_offered}` : ""}
 6. If the slot is no longer available, apologize and offer to check other times`;
-
           console.log(`Flash offer detected for ${clientPhone}, offer ${offer.id}`);
-        }
       } catch (flashErr) {
         console.warn("Flash offer lookup failed:", flashErr.message);
-      }
-    }
-
     addToConversation(clientPhone, "user", incomingMsg);
-
     let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName, flashOfferContext);
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
-
     if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
         aiResponse.includes("[Cancel result:")  || aiResponse.includes("[Booking result:")) {
-
       addToConversation(clientPhone, "assistant", aiResponse);
       addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client without showing the raw action output.");
-
       let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, give the client a natural, warm response.", clientName);
       finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       addToConversation(clientPhone, "assistant", finalResponse);
@@ -1254,45 +842,23 @@ INSTRUCTIONS:
       const cleanResponse = aiResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       addToConversation(clientPhone, "assistant", cleanResponse);
       twiml.message(cleanResponse);
-    }
-
-  } catch (err) {
     console.error("SMS error:", err);
     twiml.message("Hi! This is Awaken Zen Spa. We're having a moment — please call us at (602) 688-2578 or visit awakenzenspa.com/booking. Sorry for the inconvenience!");
-  }
-
   res.type("text/xml").send(twiml.toString());
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FLASH FILL — Routes
-// ─────────────────────────────────────────────────────────────────────────────
-
 // Manual trigger — staff portal "Sync Members" button
 app.post("/flash-fill/sync-members", async (req, res) => {
   const token = req.headers["x-staff-token"];
   if (token !== process.env.STAFF_API_TOKEN) {
     return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
     const result = await runMemberSync();
     res.json({ success: true, ...result });
-  } catch (err) {
     console.error("Manual sync error:", err.message);
     res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Manual trigger — import all Square customers into clients table
 app.post("/flash-fill/import-customers", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
     const log = makeSyncLogger();
     log.info("=== Square Customer Import Started ===");
-
     // Fetch all customers from Square (paginated via POST search)
     const customers = [];
     let cursor = null;
@@ -1303,19 +869,16 @@ app.post("/flash-fill/import-customers", async (req, res) => {
         method: "POST",
         headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION, "Content-Type": "application/json" },
         body: JSON.stringify(body)
-      });
       if (!sqRes.ok) throw new Error(`Square API ${sqRes.status}: ${await sqRes.text()}`);
       const data = await sqRes.json();
       (data.customers || []).forEach(c => customers.push(c));
       cursor = data.cursor || null;
       log.info(`  Fetched batch of ${data.customers?.length || 0} (total: ${customers.length})`);
     } while (cursor);
-
     // Get existing square_customer_ids
     const { data: existing } = await supabase.from("clients").select("square_customer_id").not("square_customer_id", "is", null);
     const existingIds = new Set((existing || []).map(c => c.square_customer_id));
     log.info(`${existingIds.size} already in Supabase, ${customers.length - existingIds.size} new`);
-
     // Map and insert new customers in chunks
     const newCustomers = customers.filter(c => !existingIds.has(c.id));
     const rows = newCustomers.map(c => {
@@ -1334,52 +897,33 @@ app.post("/flash-fill/import-customers", async (req, res) => {
         updated_at: new Date().toISOString()
       };
     }).filter(Boolean);
-
     let imported = 0;
     for (let i = 0; i < rows.length; i += 100) {
       const chunk = rows.slice(i, i + 100);
       const { error } = await supabase.from("clients").insert(chunk, { returning: "minimal" });
       if (error) log.warn(`Chunk error: ${error.message}`);
       else imported += chunk.length;
-    }
-
     log.info(`Import complete: ${imported} imported, ${existingIds.size} skipped`);
     res.json({ success: true, imported, skipped: existingIds.size, total: customers.length, log: log.entries });
-  } catch (err) {
     console.error("Customer import error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Manual trigger — regroup all clients into flash groups
 app.post("/flash-fill/regroup", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
     const log = makeGroupLogger();
     log.info("Client grouping started");
-
     const groups = await loadFlashGroups(log);
     const clients = await loadClientsWithStats(log);
     log.info(`Loaded ${clients.length} eligible non-member clients`);
-
     const vipThreshold = calcVipThreshold(clients);
     log.info(`VIP spend threshold (top 20%): $${vipThreshold.toFixed(2)}`);
-
     const assignments = [];
     const skipped = [];
     for (const client of clients) {
       const group = assignFlashGroup(client, groups, vipThreshold);
       if (group) assignments.push({ client, group });
       else skipped.push(client.id);
-    }
-
     const breakdown = {};
     Object.values(groups).forEach(g => { breakdown[g.name] = 0; });
     assignments.forEach(a => { breakdown[a.group.name] = (breakdown[a.group.name] || 0) + 1; });
-
     let grouped = 0;
     for (let i = 0; i < assignments.length; i += 200) {
       const chunk = assignments.slice(i, i + 200).map(({ client, group }) => ({
@@ -1394,45 +938,29 @@ app.post("/flash-fill/regroup", async (req, res) => {
       const { error } = await supabase.from("flash_group_members").upsert(chunk, { onConflict: "client_id" });
       if (error) log.warn(`Upsert error: ${error.message}`);
       else grouped += chunk.length;
-    }
-
     log.info(`Grouped ${grouped}, skipped ${skipped.length}. Breakdown: ${JSON.stringify(breakdown)}`);
     res.json({ success: true, grouped, skipped: skipped.length, breakdown, log: log.entries });
-  } catch (err) {
     console.error("Regroup error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FLASH FILL — Grouping helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 async function loadFlashGroups(log) {
   const { data, error } = await supabase.from("flash_groups").select("id, name, label, sort_order").eq("is_active", true).order("sort_order");
   if (error) throw new Error(`Could not load flash_groups: ${error.message}`);
   const groups = {};
   data.forEach(g => { groups[g.name] = g; });
   return groups;
-}
-
 async function loadClientsWithStats(log) {
   const { data: clients, error: ce } = await supabase
     .from("clients").select("id, first_name, phone, email, created_at, membership_active")
     .neq("membership_active", true);
   if (ce) throw new Error(`Could not load clients: ${ce.message}`);
-
   const { data: appts, error: ae } = await supabase
     .from("square_appointments_cache").select("client_id, square_customer_id, starts_at, status")
     .in("status", ["completed", "cancelled"]).not("client_id", "is", null);
   if (ae) throw new Error(`Could not load appointments: ${ae.message}`);
-
   const { data: members } = await supabase.from("flash_group_members").select("client_id, opted_in, last_booked_flash_at");
   const optedInMap = {};
   const flashBookedMap = {};
   (members || []).forEach(m => { optedInMap[m.client_id] = m.opted_in || false; flashBookedMap[m.client_id] = m.last_booked_flash_at; });
-
-  const now = new Date();
   const statsMap = {};
   for (const a of (appts || [])) {
     const d = new Date(a.starts_at);
@@ -1443,8 +971,6 @@ async function loadClientsWithStats(log) {
     if (d >= new Date(now - 60*24*3600000)) s.visits60d++;
     if (d >= new Date(now - 365*24*3600000)) s.spend12mo += p;
     if (!s.lastVisitDate || d > s.lastVisitDate) s.lastVisitDate = d;
-  }
-
   return (clients || [])
     .filter(c => c.phone || c.email)
     .map(c => {
@@ -1452,7 +978,6 @@ async function loadClientsWithStats(log) {
       const ageMs = now - new Date(c.created_at);
       const daysSinceLast = s.lastVisitDate ? (now - s.lastVisitDate) / 86400000 : null;
       const flashBookedAt = flashBookedMap[c.id] ? new Date(flashBookedMap[c.id]) : null;
-      return {
         id: c.id, first_name: c.first_name, phone: c.phone, email: c.email,
         opted_in: optedInMap[c.id] || false,
         last_booked_flash_at: flashBookedMap[c.id] || null,
@@ -1461,54 +986,26 @@ async function loadClientsWithStats(log) {
         daysSinceLast, ageMs,
         bookedFlash90d: flashBookedAt ? (now - flashBookedAt) < 90*24*3600000 : false,
         isVipByAge: ageMs >= 365*24*3600000 && (s.totalVisits || 0) >= 3,
-      };
-    })
     .filter(c => c.totalVisits > 0 || c.opted_in);
-}
-
 function calcVipThreshold(clients) {
   const spends = clients.map(c => c.spend12mo).filter(s => s > 0).sort((a, b) => a - b);
   if (spends.length === 0) return 999999;
   return spends[Math.min(Math.floor(spends.length * 0.8), spends.length - 1)];
-}
-
 function assignFlashGroup(client, groups, vipThreshold) {
   if (client.opted_in || client.bookedFlash90d) return groups["A"];
   if (client.spend12mo >= vipThreshold || client.isVipByAge) return groups["C"];
   if (client.visits60d >= 2) return groups["B"];
   if (client.totalVisits >= 1 && client.daysSinceLast !== null && client.daysSinceLast >= 60 && client.daysSinceLast <= 120) return groups["D"];
-  return null;
-}
-
 function makeGroupLogger() {
-  const entries = [];
-  const stamp = () => new Date().toISOString();
-  return {
-    entries,
-    info:  (msg) => { const e = `[INFO]  ${stamp()} ${msg}`; entries.push(e); console.log(e); },
-    warn:  (msg) => { const e = `[WARN]  ${stamp()} ${msg}`; entries.push(e); console.warn(e); },
-    error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
-  };
-}
-
 // Sync Square bookings → square_appointments_cache
 app.post("/flash-fill/sync-appointments", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
-    const log = makeSyncLogger();
     const fullSync = req.query.full === "true"; // ?full=true for historical backfill
     log.info(`Square appointments sync started (${fullSync ? "full 12-month" : "incremental"} mode)`);
-
     // Date range: full = last 12 months, incremental = last 7 days
-    const now = new Date();
     const startDate = fullSync
       ? new Date(now - 365 * 24 * 3600000).toISOString()
       : new Date(now - 7   * 24 * 3600000).toISOString();
     const endDate = new Date(now + 24 * 3600000).toISOString(); // +1 day buffer
-
     // Build client lookup map: square_customer_id → client UUID
     const { data: clientRows } = await supabase
       .from("clients").select("id, square_customer_id")
@@ -1516,41 +1013,31 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
     const clientMap = {};
     (clientRows || []).forEach(c => { clientMap[c.square_customer_id] = c.id; });
     log.info(`Loaded ${Object.keys(clientMap).length} clients for matching`);
-
     // Fetch all bookings from Square in 31-day chunks (API limit)
     const bookings = [];
     const chunkMs = 30 * 24 * 3600000; // 30 days per chunk
     let chunkStart = new Date(startDate);
     const rangeEnd  = new Date(endDate);
-
     while (chunkStart < rangeEnd) {
       const chunkEnd = new Date(Math.min(chunkStart.getTime() + chunkMs, rangeEnd.getTime()));
       let cursor = null;
       do {
         const params = new URLSearchParams({
           limit: "100",
-          location_id: LOCATION_ID,
           start_at_min: chunkStart.toISOString(),
           start_at_max: chunkEnd.toISOString()
-        });
         if (cursor) params.set("cursor", cursor);
-
         const sqRes = await fetch(`${SQUARE_BASE}/bookings?${params}`, {
           method: "GET",
           headers: { "Authorization": `Bearer ${SQUARE_TOKEN}`, "Square-Version": SQUARE_VERSION }
-        });
         if (!sqRes.ok) throw new Error(`Square bookings API ${sqRes.status}: ${await sqRes.text()}`);
         const data = await sqRes.json();
         (data.bookings || []).forEach(b => bookings.push(b));
         cursor = data.cursor || null;
         log.info(`  Chunk ${chunkStart.toISOString().slice(0,10)}→${chunkEnd.toISOString().slice(0,10)}: ${data.bookings?.length || 0} bookings (total: ${bookings.length})`);
       } while (cursor);
-
       chunkStart = chunkEnd;
-    }
-
     log.info(`Fetched ${bookings.length} bookings from Square`);
-
     // Map to cache rows — keep all non-upcoming bookings
     // Square uses ACCEPTED for booked (including past) appointments
     const rows = bookings
@@ -1573,41 +1060,21 @@ app.post("/flash-fill/sync-appointments", async (req, res) => {
           service_name:       seg.service_variation_id || null,
           synced_at:          new Date().toISOString()
         };
-      });
-
     log.info(`${rows.length} bookings to upsert (filtered from ${bookings.length} total)`);
-
     // Upsert in chunks of 100
     let synced = 0;
-    for (let i = 0; i < rows.length; i += 100) {
-      const chunk = rows.slice(i, i + 100);
       const { error } = await supabase
         .from("square_appointments_cache")
         .upsert(chunk, { onConflict: "square_booking_id" });
-      if (error) log.warn(`Chunk error: ${error.message}`);
       else synced += chunk.length;
-    }
-
     log.info(`Sync complete: ${synced} bookings upserted`);
     res.json({ success: true, synced, total: bookings.length, log: log.entries });
-  } catch (err) {
     console.error("Appointments sync error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Test trigger — sends a real SMS to staff only, no DB changes
 app.post("/flash-fill/test-offer", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
-    const now = new Date();
     const tomorrow = new Date(now.getTime() + 24 * 3600000);
     const dayName = tomorrow.toLocaleDateString("en-US", { timeZone: "America/Phoenix", weekday: "long" });
     const timeStr = "2:00 PM";
-
     // Day-before offer ($79, no add-on)
     const msg =
       `Hi Brant! A spot just opened at Awaken Zen Spa:\n` +
@@ -1615,40 +1082,21 @@ app.post("/flash-fill/test-offer", async (req, res) => {
       `Flash price: $79 (reg. $85)\n` +
       `Reply YES to claim — first come, first served.\n` +
       `Questions? Just reply and Kai will help.`;
-
-    await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
       to: "+14064801884",
       body: msg
-    });
-
     res.json({
       success: true,
       message: "Test SMS sent to +14064801884",
       preview: msg
-    });
-  } catch (err) {
     console.error("Test offer error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ── Flash Fill: Test email ───────────────────────────────────────────────────
 app.post("/flash-fill/test-email", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
-    const now = new Date();
     const tomorrow = new Date(now.getTime() + 20 * 3600000);
     const slotDisplay = tomorrow.toLocaleString("en-US", {
       timeZone: "America/Phoenix", weekday: "short", month: "short",
       day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
-    });
     const claimDeadline = new Date(now.getTime() + 4 * 3600000).toISOString();
     const claimLink = "https://awakenzenspa.com/booking?flash=test";
-
     const html = buildFlashEmail({
       r: { first_name: "Brant", email: "pewonkab@gmail.com", client_id: "test" },
       serviceName:   "European Royalty: Classic Swedish",
@@ -1658,41 +1106,22 @@ app.post("/flash-fill/test-email", async (req, res) => {
       claimDeadline,
       claimLink,
       hoursOut:      20
-    });
-
     const sendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
         "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
         "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
         from:    "Awaken Zen Spa <hello@awakenzenspa.com>",
         to:      ["pewonkab@gmail.com"],
         subject: `Brant, a spot just opened — European Royalty: Classic Swedish $79`,
         html
       })
-    });
-
     const data = await sendRes.json();
     if (!sendRes.ok) throw new Error(JSON.stringify(data));
-
     res.json({ success: true, message: "Test email sent to pewonkab@gmail.com", resend: data });
-  } catch (err) {
     console.error("Test email error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ── Flash Fill: Main trigger ─────────────────────────────────────────────────
 // POST /flash-fill/trigger
 // Body: { serviceName, slotStart (ISO), durationMins, overridePrice, addonOffered, source }
 app.post("/flash-fill/trigger", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
     const {
       serviceName   = "Massage",
       slotStart,
@@ -1701,9 +1130,7 @@ app.post("/flash-fill/trigger", async (req, res) => {
       addonOffered  = null,
       source        = "manual"
     } = req.body;
-
     if (!slotStart) return res.status(400).json({ error: "slotStart is required (ISO string)" });
-
     // 1. Calculate offer details based on time to slot
     const hoursOut = (new Date(slotStart) - new Date()) / 3600000;
     let discountPrice, addon, claimHours;
@@ -1711,13 +1138,10 @@ app.post("/flash-fill/trigger", async (req, res) => {
       discountPrice = 79; addon = null;                    claimHours = 4;
     } else if (hoursOut >= 4) {
       discountPrice = 75; addon = null;                    claimHours = 2;
-    } else {
       discountPrice = 75; addon = "Heat Infusion Ritual";  claimHours = 1;
-    }
     if (overridePrice && overridePrice >= 75) discountPrice = overridePrice;
     if (addonOffered) addon = addonOffered;
     const claimDeadline = new Date(Date.now() + claimHours * 3600000).toISOString();
-
     // 2. Get current group from cycle state
     const { data: cycleRows } = await supabase
       .from("flash_cycle_state").select("current_group_id, flash_groups(id, name, label)").limit(1);
@@ -1725,17 +1149,12 @@ app.post("/flash-fill/trigger", async (req, res) => {
     if (!cycle?.current_group_id) return res.status(500).json({ error: "No cycle state found" });
     const groupId   = cycle.current_group_id;
     const groupName = cycle.flash_groups?.name || "?";
-
     // 3. Get eligible recipients via DB function
     const { data: recipients, error: recErr } = await supabase
       .rpc("get_eligible_recipients", { p_group_id: groupId, p_excluded_square_customer_id: null });
     if (recErr) throw new Error(`get_eligible_recipients failed: ${recErr.message}`);
-
     // 4. Create flash_offer record
     const slotDisplay = new Date(slotStart).toLocaleString("en-US", {
-      timeZone: "America/Phoenix", weekday: "short", month: "short",
-      day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
-    });
     const { data: offerRow, error: offerErr } = await supabase
       .from("flash_offers").insert({
         service_name:       serviceName,
@@ -1751,7 +1170,6 @@ app.post("/flash-fill/trigger", async (req, res) => {
       }).select().single();
     if (offerErr) throw new Error(`flash_offers insert failed: ${offerErr.message}`);
     const offerId = offerRow.id;
-
     // 5. Build SMS message
     const buildSms = (firstName) => {
       const name = firstName || "there";
@@ -1765,26 +1183,17 @@ Reply STOP to opt out.`;
         return `${name} — last-minute opening today at AZS!
 ${serviceName} at ${slotDisplay} | $${discountPrice} + complimentary ${addon}
 Reply YES to grab it. Offer expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.
-Reply STOP to opt out.`;
-      } else {
         return `Hi ${name}! Same-day opening at Awaken Zen Spa:
 ${serviceName} | ${slotDisplay} | $${discountPrice}
 Reply YES to claim. Offer expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.
-Reply STOP to opt out.`;
-      }
     };
-
     // 6. Send SMS to each recipient + update send tracking
     let smsSent = 0;
     const sendErrors = [];
     for (const r of (recipients || [])) {
       if (!r.phone) continue;
-      try {
-        await twilioClient.messages.create({
-          from: TWILIO_NUMBER,
           to:   r.phone,
           body: buildSms(r.first_name)
-        });
         smsSent++;
         // Update send tracking on flash_group_members
         await supabase.from("flash_group_members")
@@ -1792,18 +1201,12 @@ Reply STOP to opt out.`;
           .eq("client_id", r.client_id);
       } catch (smsErr) {
         sendErrors.push({ client_id: r.client_id, error: smsErr.message });
-      }
-    }
-
     // 7. Update offer with sent count
     await supabase.from("flash_offers").update({ sms_sent_count: smsSent }).eq("id", offerId);
-
     // 7b. Send Resend emails in parallel
     let emailSent = 0;
     const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
-    for (const r of (recipients || [])) {
       if (!r.email) continue;
-      try {
         const claimLink = `${BASE_URL}/flash-fill/claim-link?offerId=${offerId}&clientId=${r.client_id}`;
         const emailHtml = buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, claimDeadline, claimLink, hoursOut });
         await fetch("https://api.resend.com/emails", {
@@ -1811,74 +1214,48 @@ Reply STOP to opt out.`;
           headers: {
             "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
             "Content-Type": "application/json"
-          },
           body: JSON.stringify({
             from:    "Awaken Zen Spa <hello@awakenzenspa.com>",
             to:      [r.email],
             subject: buildEmailSubject({ firstName: r.first_name, serviceName, slotDisplay, discountPrice, addon, hoursOut }),
             html:    emailHtml
           })
-        });
         emailSent++;
       } catch (emailErr) {
         console.warn(`Email failed for ${r.email}: ${emailErr.message}`);
-      }
-    }
     await supabase.from("flash_offers").update({ email_sent_count: emailSent }).eq("id", offerId);
-
     // 8. Advance cycle pointer
     await supabase.rpc("advance_cycle_pointer");
-
     // 9. Notify owner
-    await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
       to:   OWNER_CELL,
       body: `🌿 AZS Flash Fill sent!
 ${serviceName} | ${slotDisplay} | $${discountPrice}${addon ? ` + ${addon}` : ""}
 Group ${groupName}: ${smsSent} SMS sent
 Offer ID: ${offerId.slice(0,8)}`
-    });
-
-    res.json({
-      success: true,
       offerId,
       group:      groupName,
       smsSent,
       recipients: recipients?.length || 0,
       price:      discountPrice,
       addon,
-      claimDeadline,
       errors:     sendErrors.length > 0 ? sendErrors : undefined
-    });
-
-  } catch (err) {
     console.error("Flash fill trigger error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ── Flash Fill: Claim endpoint ────────────────────────────────────────────────
 // Called by Kai when a client replies YES to a flash offer SMS
 app.post("/flash-fill/claim", async (req, res) => {
   const { offerId, clientPhone, squareCustomerId } = req.body;
-  try {
     // Find the offer
     const { data: offer } = await supabase
       .from("flash_offers").select("*").eq("id", offerId).single();
     if (!offer) return res.status(404).json({ error: "Offer not found" });
     if (offer.status !== "active") return res.json({ success: false, alreadyClaimed: true, status: offer.status });
-
     // Find client by phone or square_customer_id
     let clientId = null;
     if (clientPhone) {
       const { data: c } = await supabase.from("clients").select("id").eq("phone", clientPhone).single();
       clientId = c?.id;
-    }
     if (!clientId && squareCustomerId) {
       const { data: c } = await supabase.from("clients").select("id").eq("square_customer_id", squareCustomerId).single();
-      clientId = c?.id;
-    }
-
     // Mark offer as filled
     await supabase.from("flash_offers").update({
       status:               "filled",
@@ -1886,73 +1263,35 @@ app.post("/flash-fill/claim", async (req, res) => {
       filled_at:            new Date().toISOString(),
       updated_at:           new Date().toISOString()
     }).eq("id", offerId);
-
     // Update flash booking history on the client
     if (clientId) {
       await supabase.from("flash_group_members")
         .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("client_id", clientId);
-    }
-
     res.json({ success: true, offerId, clientId, status: "filled" });
-
-  } catch (err) {
     console.error("Flash claim error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ── Flash Fill: Offer status ──────────────────────────────────────────────────
 app.get("/flash-fill/status/:offerId", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  try {
-    const { data: offer } = await supabase
       .from("flash_offers").select("*, flash_groups(name, label)").eq("id", req.params.offerId).single();
-    if (!offer) return res.status(404).json({ error: "Offer not found" });
     res.json({ success: true, offer });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ── Flash Fill: Email claim link (GET — client clicks button in email) ───────
 app.get("/flash-fill/claim-link", async (req, res) => {
   const { offerId, clientId } = req.query;
-  try {
-    const { data: offer } = await supabase
-      .from("flash_offers").select("*").eq("id", offerId).single();
-
     if (!offer) return res.redirect(`https://awakenzenspa.com?flash=not-found`);
     if (offer.status !== "active") {
       return res.redirect(`https://awakenzenspa.com?flash=claimed`);
-    }
     if (new Date() > new Date(offer.claim_deadline)) {
       await supabase.from("flash_offers").update({ status: "expired" }).eq("id", offerId);
       return res.redirect(`https://awakenzenspa.com?flash=expired`);
-    }
-
     // Mark as filled
-    await supabase.from("flash_offers").update({
       status:              "filled",
       filled_by_client_id: clientId || null,
       filled_at:           new Date().toISOString(),
       updated_at:          new Date().toISOString()
-    }).eq("id", offerId);
-
-    if (clientId) {
-      await supabase.from("flash_group_members")
-        .update({ last_booked_flash_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .eq("client_id", clientId);
-    }
-
     // Build pre-fill params from offer data
     const slotDate = new Date(offer.slot_start);
     const dateStr  = slotDate.toLocaleDateString("en-US", { timeZone: "America/Phoenix", year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-").replace(/-(\d+)-(\d+)$/, (_, m, d) => `-${m.padStart(2,"0")}-${d.padStart(2,"0")}`);
     const timeStr  = slotDate.toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "2-digit", minute: "2-digit", hour12: false });
-
     // Map service name to booking page service key
     const serviceKeyMap = {
       "european royalty": "european", "classic swedish": "european", "swedish": "european",
@@ -1962,35 +1301,21 @@ app.get("/flash-fill/claim-link", async (req, res) => {
       "warm stone": "warm-stone", "hot stone": "warm-stone",
       "calm and clear": "calm-clear", "relaxation facial": "calm-clear",
       "youthful glow": "youthful", "anti-aging": "youthful",
-    };
     const svcKey = serviceKeyMap[offer.service_name?.toLowerCase()] || "european";
     const addonParam = offer.addon_offered ? `&addon=${encodeURIComponent(offer.addon_offered)}` : "";
     const bookingUrl = `https://awakenzenspa.com/booking?flash=claimed&offer=${offerId}&service=${svcKey}&date=${dateStr}&time=${timeStr}&price=${offer.discount_price}${addonParam}`;
     res.redirect(bookingUrl);
-
-  } catch (err) {
     console.error("Claim link error:", err.message);
     res.redirect(`https://awakenzenspa.com?flash=error`);
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FLASH FILL — Email builders
-// ─────────────────────────────────────────────────────────────────────────────
-
 function buildEmailSubject({ firstName, serviceName, slotDisplay, discountPrice, addon, hoursOut }) {
   const name = firstName || "there";
   if (hoursOut >= 12) return `${name}, a spot just opened — ${serviceName} $${discountPrice}`;
   if (addon)          return `Last-minute opening today + complimentary ${addon} — $${discountPrice}`;
   return `Same-day opening at AZS — ${serviceName} at ${slotDisplay}`;
-}
-
 function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, claimDeadline, claimLink, hoursOut }) {
   const name = r.first_name || "there";
   const expiresTime = new Date(claimDeadline).toLocaleTimeString("en-US", {
-    timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true
-  });
-
   const addonHtml = addon ? `
     <tr>
       <td style="padding:0 40px 20px;">
@@ -2002,24 +1327,19 @@ function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, cl
         </table>
       </td>
     </tr>` : "";
-
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f5f2ee;font-family:Georgia,serif;">
 <table cellpadding="0" cellspacing="0" style="width:100%;max-width:560px;margin:40px auto;background:#faf8f5;border:1px solid #e5dfd8;">
-
   <!-- Header -->
   <tr><td style="padding:32px 40px;border-bottom:1px solid #e5dfd8;text-align:center;">
     <p style="margin:0;font-family:Georgia,serif;font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#8a7f78;">Awaken Zen Spa</p>
   </td></tr>
-
   <!-- Body -->
   <tr><td style="padding:36px 40px 8px;">
     <h1 style="margin:0 0 16px;font-family:Georgia,serif;font-weight:400;font-size:26px;color:#2a2220;line-height:1.3;">A spot just opened for you${hoursOut < 6 ? " today" : ""}.</h1>
     <p style="margin:0 0 24px;font-family:Arial,sans-serif;font-size:15px;color:#4a4440;line-height:1.7;">Hi ${name}, we have a last-minute opening and wanted to offer it to you first.</p>
-  </td></tr>
-
   <!-- Offer details -->
   <tr><td style="padding:0 40px 24px;">
     <table cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #e5dfd8;background:#fff;">
@@ -2027,38 +1347,26 @@ function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, cl
         <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Service</p>
         <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:17px;color:#2a2220;">${serviceName}</p>
       </td></tr>
-      <tr><td style="padding:20px 24px;border-bottom:1px solid #e5dfd8;">
         <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Date &amp; Time</p>
         <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:17px;color:#2a2220;">${slotDisplay}</p>
-      </td></tr>
       <tr><td style="padding:20px 24px;">
         <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#8a7f78;">Flash Price</p>
         <p style="margin:4px 0 0;font-family:Georgia,serif;font-size:24px;color:#c47a5a;"><strong>$${discountPrice}</strong> <span style="font-size:14px;color:#8a7f78;text-decoration:line-through;">$85</span></p>
-      </td></tr>
     </table>
-  </td></tr>
-
   ${addonHtml}
-
   <!-- CTA -->
   <tr><td style="padding:0 40px 28px;text-align:center;">
     <a href="${claimLink}" style="display:inline-block;padding:16px 40px;background:#2a2220;color:#faf8f5;font-family:Arial,sans-serif;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;text-decoration:none;">Claim This Spot</a>
     <p style="margin:16px 0 0;font-family:Arial,sans-serif;font-size:12px;color:#8a7f78;">Offer expires at ${expiresTime} · First come, first served</p>
-  </td></tr>
-
   <!-- Footer -->
   <tr><td style="padding:24px 40px;border-top:1px solid #e5dfd8;text-align:center;">
     <p style="margin:0;font-family:Arial,sans-serif;font-size:11px;color:#8a7f78;line-height:1.6;">
       Awaken Zen Spa · 2830 E Brown Rd Suite 10, Mesa AZ 85213<br>
       <a href="https://awakenzenspa.com" style="color:#8a7f78;">awakenzenspa.com</a> · (602) 688-2578
     </p>
-  </td></tr>
-
 </table>
 </body>
 </html>`;
-}
-
 // ── Square webhook — booking.updated / booking.cancelled ─────────────────────
 // Register this URL in Square Developer → Webhooks:
 // https://awaken-zen-kai-production.up.railway.app/square-webhook
@@ -2066,39 +1374,26 @@ function buildFlashEmail({ r, serviceName, slotDisplay, discountPrice, addon, cl
 app.post("/square-webhook", async (req, res) => {
   // Acknowledge Square immediately — must respond within 3 seconds
   res.status(200).json({ received: true });
-
-  try {
     const event = req.body;
     const eventType = event.type;
     const booking   = event.data?.object?.booking;
-
     if (!booking) return;
-
     const status = booking.status;
     const isCancellation = ["CANCELLED_BY_SELLER", "CANCELLED_BY_BUYER"].includes(status);
     if (!isCancellation) return;
-
     console.log(`Square webhook: ${eventType} — booking ${booking.id} status ${status}`);
-
     // Extract slot details from the booking
     const slotStart = booking.start_at;
     if (!slotStart) return;
-
     // Only fire flash offer if slot is at least 1 hour away
-    const hoursOut = (new Date(slotStart) - new Date()) / 3600000;
     if (hoursOut < 1) {
       console.log(`Flash fill skipped — slot too soon (${hoursOut.toFixed(1)} hrs out)`);
       return;
-    }
     if (hoursOut > 24) {
       console.log(`Flash fill skipped — slot too far out (${hoursOut.toFixed(1)} hrs), consider manual trigger`);
-      return;
-    }
-
     // Get service name from appointment segments
     const seg = booking.appointment_segments?.[0];
     const serviceVariationId = seg?.service_variation_id || "";
-
     // Map Square variation IDs back to service names
     const variationToService = {
       "TIB77G2AIP7GABDSWZFXN6FF": "European Royalty: Classic Swedish",
@@ -2126,53 +1421,30 @@ app.post("/square-webhook", async (req, res) => {
       "3DYWCG6NEV3PBAUXHMNYWT4V": "Micro-Needling Treatment",
       "TIC4IYJZHISU4ZCBHZIYKTUT": "Luxury Spa Experience",
       "ZQQHCBPQNW2HCHKYW7HQ3VWX": "Radiant Head & Scalp Experience",
-    };
     const serviceName = variationToService[serviceVariationId] || "Massage";
     const durationMins = seg?.duration_minutes || 60;
-
     // Get the cancelling customer's Square ID to exclude them from the offer
     const cancelledSquareCustomerId = booking.customer_id || null;
-
     // Calculate offer details
     const discountPrice = hoursOut >= 12 ? 79 : 75;
     const addon         = hoursOut < 4   ? "Heat Infusion Ritual" : null;
     const claimHours    = hoursOut >= 12 ? 4 : hoursOut >= 4 ? 2 : 1;
-    const claimDeadline = new Date(Date.now() + claimHours * 3600000).toISOString();
-
     // Get current group
-    const { data: cycleRows } = await supabase
       .from("flash_cycle_state")
       .select("current_group_id, flash_groups(id, name, label)")
       .limit(1);
-    const cycle = cycleRows?.[0];
     if (!cycle?.current_group_id) {
       console.log("Flash fill skipped — no cycle state");
-      return;
-    }
-    const groupId   = cycle.current_group_id;
-    const groupName = cycle.flash_groups?.name || "?";
-
     // Get eligible recipients (excluding the cancelling client)
     const { data: recipients } = await supabase
       .rpc("get_eligible_recipients", {
         p_group_id: groupId,
         p_excluded_square_customer_id: cancelledSquareCustomerId
-      });
-
     if (!recipients || recipients.length === 0) {
       console.log(`Flash fill: no eligible recipients in group ${groupName} — advancing pointer`);
       await supabase.rpc("advance_cycle_pointer");
-      return;
-    }
-
     // Create flash offer record
-    const slotDisplay = new Date(slotStart).toLocaleString("en-US", {
-      timeZone: "America/Phoenix", weekday: "short", month: "short",
-      day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
-    });
-
     const { data: offerRow } = await supabase
-      .from("flash_offers").insert({
         square_appt_id:           booking.id,
         square_cancelled_client_id: cancelledSquareCustomerId,
         service_name:             serviceName,
@@ -2186,30 +1458,14 @@ app.post("/square-webhook", async (req, res) => {
         status:                   "active",
         recipients_count:         recipients.length,
         trigger_source:           "webhook",
-      }).select().single();
-
     if (!offerRow) {
       console.error("Flash fill: failed to create offer record");
-      return;
-    }
-    const offerId = offerRow.id;
-
     // Build SMS message
-    const buildSms = (firstName) => {
-      const name = firstName || "there";
-      if (hoursOut >= 12) {
         return `Hi ${name}! A spot just opened at Awaken Zen Spa:\n${serviceName} | ${slotDisplay}\nFlash price: $${discountPrice} (reg. $85)\nReply YES to claim — first come, first served.\nReply STOP to opt out.`;
-      } else if (addon) {
         return `${name} — last-minute opening today at AZS!\n${serviceName} at ${slotDisplay} | $${discountPrice} + complimentary ${addon}\nReply YES to grab it. Expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
-      } else {
         return `Hi ${name}! Same-day opening at Awaken Zen Spa:\n${serviceName} | ${slotDisplay} | $${discountPrice}\nReply YES to claim. Expires ${new Date(claimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
-      }
-    };
-
     // Send SMS + email to group
     let smsSent = 0, emailSent = 0;
-    const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
-
     for (const r of recipients) {
       // SMS
       if (r.phone) {
@@ -2217,16 +1473,12 @@ app.post("/square-webhook", async (req, res) => {
           await twilioClient.messages.create({ from: TWILIO_NUMBER, to: r.phone, body: buildSms(r.first_name) });
           smsSent++;
         } catch (e) { console.warn(`SMS failed to ${r.phone}: ${e.message}`); }
-      }
       // Email
       if (r.email) {
-        try {
-          const serviceKeyMap = {
             "european royalty: classic swedish": "european", "muscle mender: deep tissue": "muscle",
             "spring senses: lymphatic drainage": "lymphatic", "sole symphony: ashiatsu barefoot massage": "ashiatsu",
             "warm stone retreat": "warm-stone", "calm and clear: relaxation facial": "calm-clear",
             "youthful glow: anti-aging facial": "youthful",
-          };
           const svcKey = serviceKeyMap[serviceName.toLowerCase()] || "european";
           const slotDate = new Date(slotStart);
           const dateStr  = `${slotDate.getFullYear()}-${String(slotDate.getMonth()+1).padStart(2,"0")}-${String(slotDate.getDate()).padStart(2,"0")}`;
@@ -2243,22 +1495,13 @@ app.post("/square-webhook", async (req, res) => {
               subject: buildEmailSubject({ firstName: r.first_name, serviceName, slotDisplay, discountPrice, addon, hoursOut }),
               html: emailHtml
             })
-          });
           emailSent++;
         } catch (e) { console.warn(`Email failed to ${r.email}: ${e.message}`); }
-      }
-    }
-
     // Update offer counts and advance pointer
     await supabase.from("flash_offers").update({ sms_sent_count: smsSent, email_sent_count: emailSent }).eq("id", offerId);
-    await supabase.rpc("advance_cycle_pointer");
-
     // Notify owner
-    await twilioClient.messages.create({
       from: TWILIO_NUMBER, to: OWNER_CELL,
       body: `🌿 AZS Flash Fill auto-triggered!\n${serviceName} | ${slotDisplay} | $${discountPrice}${addon ? ` + ${addon}` : ""}\nGroup ${groupName}: ${smsSent} SMS, ${emailSent} emails\nOffer ID: ${offerId.slice(0,8)}`
-    });
-
     // Trigger Social Flash (non-blocking — fire and forget)
     triggerSocialFlash(offerId, slotStart, {
       serviceName:        serviceName,
@@ -2266,29 +1509,13 @@ app.post("/square-webhook", async (req, res) => {
       flashPrice:         discountPrice,
       regPrice:           85,
       addon:              addon
-    });
-
     console.log(`Flash fill complete: offer ${offerId}, group ${groupName}, ${smsSent} SMS, ${emailSent} emails`);
-
-    console.log(`Flash fill complete: offer ${offerId}, group ${groupName}, ${smsSent} SMS, ${emailSent} emails`);
-
-  } catch (err) {
     console.error("Square webhook error:", err.message);
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // END FLASH FILL — Routes
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FLASH FILL — Escalation engine
 // Runs every 15 minutes. Finds unclaimed offers past their claim deadline
 // and sends to the next group in rotation (max 2 escalations per offer).
-// ─────────────────────────────────────────────────────────────────────────────
-
 async function runEscalationCheck() {
-  try {
     // Find active offers past their claim deadline
     const { data: expiredOffers } = await supabase
       .from("flash_offers")
@@ -2296,13 +1523,9 @@ async function runEscalationCheck() {
       .eq("status", "active")
       .lt("claim_deadline", new Date().toISOString())
       .lte("escalation_level", 1); // max 2 escalations (levels 0 and 1)
-
     if (!expiredOffers || expiredOffers.length === 0) return;
-
     console.log(`Escalation check: ${expiredOffers.length} offer(s) to escalate`);
-
     for (const offer of expiredOffers) {
-      try {
         // Check if slot is still in the future
         const hoursOut = (new Date(offer.slot_start) - new Date()) / 3600000;
         if (hoursOut < 0.5) {
@@ -2312,60 +1535,35 @@ async function runEscalationCheck() {
             .eq("id", offer.id);
           console.log(`Offer ${offer.id.slice(0,8)} expired — slot passed`);
           continue;
-        }
-
         // Get next group in rotation
         const { data: currentGroup } = await supabase
           .from("flash_groups")
           .select("sort_order")
           .eq("id", offer.group_id)
           .single();
-
         const nextSortOrder = (currentGroup?.sort_order % 4) + 1; // wraps 4→1
         const { data: nextGroup } = await supabase
-          .from("flash_groups")
           .select("id, name")
           .eq("sort_order", nextSortOrder)
           .eq("is_active", true)
-          .single();
-
         if (!nextGroup) {
-          await supabase.from("flash_offers")
-            .update({ status: "expired", updated_at: new Date().toISOString() })
-            .eq("id", offer.id);
-          continue;
-        }
-
         // Get eligible recipients in next group
         const { data: recipients } = await supabase
           .rpc("get_eligible_recipients", {
             p_group_id: nextGroup.id,
             p_excluded_square_customer_id: offer.square_cancelled_client_id || null
-          });
-
         if (!recipients || recipients.length === 0) {
           // Nobody eligible in next group either — expire
-          await supabase.from("flash_offers")
-            .update({ status: "expired", updated_at: new Date().toISOString() })
-            .eq("id", offer.id);
           console.log(`Offer ${offer.id.slice(0,8)} expired — no recipients in group ${nextGroup.name}`);
-
           // Notify owner if final escalation failed
-          await twilioClient.messages.create({
             from: TWILIO_NUMBER, to: OWNER_CELL,
             body: `⚠️ AZS Flash Fill: offer for ${offer.service_name} at ${new Date(offer.slot_start).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })} expired unfilled after escalation.`
-          });
-          continue;
-        }
-
         // New claim window — 1 hr if urgent, 2 hrs otherwise
         const newClaimHours  = hoursOut < 4 ? 1 : 2;
         const newClaimDeadline = new Date(Date.now() + newClaimHours * 3600000).toISOString();
         const slotDisplay    = new Date(offer.slot_start).toLocaleString("en-US", {
           timeZone: "America/Phoenix", weekday: "short", month: "short",
           day: "numeric", hour: "numeric", minute: "2-digit", hour12: true
-        });
-
         // Update offer to next group
         await supabase.from("flash_offers").update({
           group_id:               nextGroup.id,
@@ -2375,30 +1573,23 @@ async function runEscalationCheck() {
           recipients_count:       recipients.length,
           updated_at:             new Date().toISOString()
         }).eq("id", offer.id);
-
         // Build SMS
         const addon = offer.addon_offered;
         const buildEscalationSms = (firstName) => {
           const name = firstName || "there";
           if (addon) {
             return `${name} — last-minute opening at Awaken Zen Spa!\n${offer.service_name} | ${slotDisplay}\n$${offer.discount_price} + complimentary ${addon}\nReply YES to claim. Expires ${new Date(newClaimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
-          }
           return `Hi ${name}! Last-minute opening at Awaken Zen Spa:\n${offer.service_name} | ${slotDisplay} | $${offer.discount_price}\nReply YES to claim. Offer expires ${new Date(newClaimDeadline).toLocaleTimeString("en-US", { timeZone: "America/Phoenix", hour: "numeric", minute: "2-digit", hour12: true })}.\nReply STOP to opt out.`;
-        };
-
         // Send to next group
         let smsSent = 0, emailSent = 0;
         const BASE_URL = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
-
         for (const r of recipients) {
           if (r.phone) {
             try {
               await twilioClient.messages.create({ from: TWILIO_NUMBER, to: r.phone, body: buildEscalationSms(r.first_name) });
               smsSent++;
             } catch (e) { console.warn(`Escalation SMS failed: ${e.message}`); }
-          }
           if (r.email) {
-            try {
               const serviceKeyMap = {
                 "european royalty: classic swedish": "european", "muscle mender: deep tissue": "muscle",
                 "spring senses: lymphatic drainage": "lymphatic", "sole symphony: ashiatsu barefoot massage": "ashiatsu",
@@ -2421,44 +1612,26 @@ async function runEscalationCheck() {
                   subject: buildEmailSubject({ firstName: r.first_name, serviceName: offer.service_name, slotDisplay, discountPrice: offer.discount_price, addon, hoursOut }),
                   html: emailHtml
                 })
-              });
               emailSent++;
             } catch (e) { console.warn(`Escalation email failed: ${e.message}`); }
-          }
-        }
-
         await supabase.from("flash_offers")
           .update({ sms_sent_count: (offer.sms_sent_count || 0) + smsSent, email_sent_count: (offer.email_sent_count || 0) + emailSent })
           .eq("id", offer.id);
-
         console.log(`Escalated offer ${offer.id.slice(0,8)} to group ${nextGroup.name}: ${smsSent} SMS, ${emailSent} emails`);
-
         // Notify owner of escalation
-        await twilioClient.messages.create({
           from: TWILIO_NUMBER, to: OWNER_CELL,
           body: `🔄 AZS Flash Fill escalated to Group ${nextGroup.name}:\n${offer.service_name} | ${slotDisplay}\n${smsSent} SMS, ${emailSent} emails sent`
-        });
-
       } catch (offerErr) {
         console.error(`Escalation error for offer ${offer.id}:`, offerErr.message);
-      }
-    }
-  } catch (err) {
     console.error("Escalation check error:", err.message);
-  }
-}
-
 // Start escalation polling — runs every 15 minutes
 setInterval(runEscalationCheck, 15 * 60 * 1000);
 // Also run once on startup after a short delay
 setTimeout(runEscalationCheck, 30 * 1000);
-
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
-
 // ── Catch-all POST for Vapi webhook events ────────────────────────────────────
 app.post("/", (req, res) => res.json({ received: true }));
-
 /**
  * AZS Content Engine — Background Content Generator
  * ─────────────────────────────────────────────────────────
@@ -2467,7 +1640,6 @@ app.post("/", (req, res) => res.json({ received: true }));
  * Called by cron-job.org weekly:
  *   POST https://awaken-zen-kai-production.up.railway.app/generate-content
  *   Header: x-cron-token: YOUR_CRON_SECRET
- *
  * Generates a full week of text-based social posts across 6 pillars:
  *   - Inspirational quotes (AZS voice)
  *   - Wellness education tips
@@ -2475,20 +1647,14 @@ app.post("/", (req, res) => res.json({ received: true }));
  *   - Zen / recentering tips
  *   - Monthly special captions
  *   - Social proof / review highlight copy
- *
  * All posts land in Supabase approval_queue for staff review.
  */
-
 // ── AZS Brand Voice Prompt ────────────────────────────────────────────────────
 const AZS_VOICE = `You are the voice of Awaken Zen Spa (AZS) — a boutique massage and esthetics practice in Mesa, Arizona run by Brant (LMT, owner) and Trevor (LE, esthetician).
-
 BRAND PHILOSOPHY:
 The body is not a machine to be fixed. It is a living system that holds memory, emotion, and wisdom. Therapeutic touch is not indulgence — it is intelligent intervention. AZS exists at the intersection of clinical expertise and genuine care.
-
 Brant's background: Licensed Massage Therapist with advanced training in problem-focused modalities. Deep interest in somatic psychology, tensegrity (the body as a tensional network), fascial release, and the science of nervous system regulation. Has personal experience with holotropic breathwork and pranayama. Makes complex concepts feel personal and accessible.
-
 Trevor's background: Licensed Esthetician specializing in results-driven facial treatments. Treats the barrier, the microbiome, inflammation — not just the surface.
-
 VOICE CHARACTERISTICS:
 - Sounds like a smart, warm practitioner who reads research and has felt this work transform their own body
 - Specific over generic: "the erector spinae" not "back muscles", "parasympathetic dominance" not "relaxation"
@@ -2497,7 +1663,6 @@ VOICE CHARACTERISTICS:
 - Short sentences land hard. Paragraphs breathe.
 - Never uses: "journey", "transform your life", "ultimate", "luxurious experience", "treat yourself to"
 - Never starts with "At AZS" or the spa name. Never sounds like an ad.
-
 CONTENT ANGLES UNIQUE TO AZS:
 1. TENSEGRITY AND FASCIA: The body as a tensional web. Massage reorganizes fascial tension patterns, not just muscle.
 2. NERVOUS SYSTEM FIRST: Polyvagal theory, ventral vagal state. Touch communicates safety to the brainstem before the mind knows it.
@@ -2506,19 +1671,16 @@ CONTENT ANGLES UNIQUE TO AZS:
 5. BODY AS RECORD: The psoas, the jaw, the breath — the body holds unprocessed experience. Touch creates a window for release.
 6. LYMPHATIC INTELLIGENCE: The lymph system has no pump. Manual drainage is immune support, not just detox.
 7. ASHIATSU MECHANICS: Weight distribution vs thumb pressure — the physics of barefoot massage.
-
 ABOUT AZS:
 - Location: 2830 East Brown Road, Suite 10, Mesa, AZ 85213. Appointment-only.
 - Massage: Muscle Mender (deep tissue), European Royalty (Swedish), Sole Symphony (Ashiatsu), Warm Stone Retreat (hot stone), Spring Senses (lymphatic drainage), prenatal massage
 - Facial: Custom facials, RejuvaFresh HydraFacial-style, LED therapy, dermaplaning, microneedling, brow services
 - Handmade AZS skincare product line — natural formulations, no ethoxylated emulsifiers or chemical UV filters
 - Booking: awakenzenspa.com or text (602) 688-2578
-
 FORMATTING:
 - Instagram captions: 80-180 words. Hook first line. White space between ideas.
 - Education posts: up to 200 words. Quote posts: 30-60 words max.
 - Hashtags: 8-10 max. Mix niche + mid + broad. Always #awakenzen. No emojis except sparingly in promos.`;
-
 // ── Weekly content plan ───────────────────────────────────────────────────────
 const THEME_POOLS = {
   monday_quote: [
@@ -2534,84 +1696,69 @@ const THEME_POOLS = {
     'The psoas muscle and the stress response — its anatomical connection to the diaphragm, why hip flexor tension is rarely just about sitting too much',
     'Interoception: the sense we never talk about — the ability to feel your internal state, why it degrades under chronic stress, and how bodywork rebuilds it',
     'Why sleep is not enough recovery: what the body does during manual therapy that sleep cannot replicate',
-  ],
   tuesday_reel: [
     'Effleurage — the opening stroke of Swedish massage. Why the nervous system needs slow broad pressure before it accepts deeper specific work.',
     'Ashiatsu: the physics of barefoot massage. How body weight creates broader more sustained pressure than thumb or elbow techniques.',
     'The fascial web: when you press here, it echoes there. Myofascial continuity and why massage affects areas far from the hands.',
     'Deep tissue vs deep pressure — they are not the same. Real deep tissue work is slow, specific, and communicates with the tissue.',
     'Lymphatic drainage: the lightest touch with the biggest systemic effect. Why feather-light pressure surprises everyone.',
-  ],
   wednesday_quote: [
     'Midweek. The body has been keeping score of every meeting, every screen, every held breath.',
     'You cannot think your way out of a nervous system stuck in threat response. You have to move through it.',
     'The breath is the only autonomic function you can consciously control. That makes it the door between voluntary and involuntary.',
     'Tight shoulders are not a personality trait. They are a posture that became a pattern that became a belief.',
     'The body is always talking. Most of us learned to stop listening before we learned to walk.',
-  ],
   wednesday_education: [
     'Fascia as sensory organ: recent research shows fascia contains more nerve endings than muscle — making it a primary site of proprioception and interoception, not passive connective tissue',
     'Skin microbiome disruption: aggressive cleansing reduces microbial diversity and compromises the acid mantle — emerging research links barrier disruption to systemic inflammatory load',
     'Cyclic sighing neuroscience: double inhale through nose, extended exhale through mouth — shown by Stanford research to downregulate sympathetic tone faster than any other voluntary breathing pattern',
     'The glymphatic system: the brain clears metabolic waste during deep sleep via glymphatic pathways — emerging research suggests cervical and cranial work may support flow at entry points',
     'Cold plunge vs massage for recovery: cold constricts lymphatic vessels and may blunt adaptive inflammatory signaling — manual therapy maintains tissue perfusion while modulating pain',
-  ],
   thursday_reel: [
     'The skin barrier: stratum corneum as brick-and-mortar structure, why it breaks down, what a HydraFacial-style treatment actually does to restore function',
     'Dermaplaning: removing vellus hair and hyperkeratinized cells — why this dramatically improves product penetration and creates the canvas for everything else',
     'LED therapy wavelengths: 630-660nm red for collagen synthesis, 415nm blue for acne bacteria, 830nm near-infrared for deeper tissue repair',
     'Microneedling: controlled micro-injury as a healing signal — the inflammatory response is the mechanism, not a side effect',
     'Hydration vs moisture in skin: humectants vs lipids — most people apply the wrong thing in the wrong order',
-  ],
   thursday_bts: [
     'The intentionality behind how a treatment room is prepared — temperature, linens, light, sound. The environment is part of the therapeutic container.',
     'What happens in the 10 minutes before a client arrives — how a practitioner prepares their own nervous system to co-regulate someone else.',
     'Product selection for a facial: assessing skin barrier status, microbiome disruption, and inflammatory load before choosing a single product.',
     'The difference between 60 and 90 minutes: what the extra 30 minutes allows neurologically that a shorter session cannot.',
     'Continuing education: why Brant studies pain science and somatic psychology outside required CE hours, and how it changes what happens in the room.',
-  ],
   friday_quote: [
     'It is Friday. Your body carried you through every meeting, every screen, every moment of held breath this week.',
     'Permission is something you give yourself. No one is going to hand you rest. You have to decide it is legitimate.',
     'The body that rests well, works well. This is physiology, not philosophy.',
     'You will not find stillness in your thoughts. You will find it in your body, when you finally let it land.',
     'Self-care is not aesthetic. It is maintenance of the system you use for everything you care about.',
-  ],
   saturday_bts: [
     'What a treatment room at AZS looks like before a session — the ritual of preparation that turns a space into a held one.',
     'Every product in a treatment has a specific mechanism. Nothing is there for aesthetics.',
     'Appointment-only means every client gets full presence. No waiting room energy. One client, one practitioner, one hour.',
     'What Brant and Trevor are studying this month — the books, papers, and courses that keep a practice sharp.',
     'The AZS skincare line: formulated without ethoxylated emulsifiers or chemical UV filters — what that means for barrier health.',
-  ],
   saturday_education: [
     'Nervous system reset: physiological sigh (double inhale, long exhale) repeated 5 times — why the extended exhale activates the parasympathetic branch specifically',
     'Vagus nerve stimulation without a device: cold water to the face, humming, gargling, slow exhalation — each activates it through different mechanoreceptor pathways',
     'Why weekends are not enough recovery from modern chronic stress — the case for deliberate parasympathetic activation, not just absence of stressors',
     'Magnesium glycinate, sleep architecture, and muscle hypertonicity: the nutritional piece that affects massage outcomes more than most realize',
     'Somatic scanning: a body awareness practice from Sensorimotor Psychotherapy — noticing without trying to change what is actually present',
-  ],
   sunday_quote: [
     'Sunday is not the end of the week. It is the exhale before the next inhale.',
     'The body does not need to earn rest. Rest is how it earns everything else.',
     'Slow down long enough to notice where you actually are in your body right now.',
     'You are not behind. You are a biological system that requires maintenance.',
     'Tomorrow will ask a great deal of you. Today, ask very little of yourself.',
-  ],
   sunday_education: [
     'Preparing your nervous system for Monday: why Sunday evening anxiety activates sympathetic tone and undermines Monday morning recovery',
     'Circadian rhythm and bodywork timing: cortisol peaks 30-45 minutes after waking — afternoon massage leverages natural parasympathetic windows',
     'Box breathing: 4 counts in, 4 hold, 4 out, 4 hold — why the hold phases specifically are where the autonomic shift happens',
     'Weekly somatic inventory: where are you holding tension, where is breath shallow, what has the body been protecting this week?',
     'Proactive vs reactive bodywork: waiting until you are in pain is like waiting until the car breaks down to change the oil',
-  ],
-};
-
 function pickTheme(pool) {
   const arr = THEME_POOLS[pool] || [];
   return arr[Math.floor(Math.random() * arr.length)] || '';
-}
-
 const WEEKLY_PLAN = [
   { day: 'Monday',    platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  themePool: 'monday_quote' },
   { day: 'Monday',    platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    themePool: 'monday_education' },
@@ -2629,7 +1776,6 @@ const WEEKLY_PLAN = [
   { day: 'Sunday',    platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  themePool: 'sunday_quote' },
   { day: 'Sunday',    platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    themePool: 'sunday_education' },
 ];
-
 // ── Hashtag sets by pillar ────────────────────────────────────────────────────
 const HASHTAGS = {
   inspiration:     '#awakenzen #selfcare #wellnesslifestyle #zenlife #mesaspa #restisproductive #slowdown #mindbody #arizonaspa #presentmoment',
@@ -2638,8 +1784,6 @@ const HASHTAGS = {
   monthly_special: '#awakenzen #mesaspa #massagetherapy #selfcarefriday #arizonaspa #mesaarizona #relaxation #treatyourself #massagemesa #spaday',
   bts:             '#awakenzen #spatime #behindthescenes #mesaspa #boutiquespy #zenspace #arizonaspa #massagetherapist #esthetician #smallbusiness',
   social_proof:    '#awakenzen #clientlove #massageresults #skintransformation #mesaspa #realresults #massagetherapy #facialresults #arizonaspa #testimonial',
-};
-
 // ── Trending wellness topics to research ─────────────────────────────────────
 const TRENDING_TOPICS = [
   'fascia sensory organ research Schleip interstitial receptors 2025',
@@ -2657,8 +1801,6 @@ const TRENDING_TOPICS = [
   'prenatal massage cortisol oxytocin research outcomes',
   'psoas muscle stress diaphragm connection somatic',
   'skin aging inflammation barrier function research 2025 2026',
-];
-
 // ── Generate a single post ────────────────────────────────────────────────────
 async function generatePost(slot, monthlySpecial, trendingContext) {
   const isPromo       = slot.pillar === 'monthly_special';
@@ -2666,52 +1808,38 @@ async function generatePost(slot, monthlySpecial, trendingContext) {
   const isQuote       = slot.post_type === 'quote';
   const isSocialProof = slot.pillar === 'social_proof';
   const theme         = slot.themePool ? pickTheme(slot.themePool) : (slot.theme || '');
-
   let contextBlock = '';
   if (isPromo && monthlySpecial) {
     contextBlock = `CURRENT MONTHLY SPECIAL:\n${monthlySpecial}\n\nLead with a feeling or truth about self-care, weave in the offer naturally. Never lead with the discount.\n\n`;
-  }
   if (slot.isTrending && trendingContext) {
     contextBlock = `RESEARCH CONTEXT (ground the post in this — cite the concept, not necessarily the paper):\n${trendingContext}\n\n`;
-  }
   if (isSocialProof) {
     contextBlock = `Write a social proof post celebrating client results without fabricating quotes or names. Frame around the transformation type and what becomes possible. Be specific and human.\n\n`;
-  }
-
   const lengthGuide = isQuote
     ? 'LENGTH: 30-60 words only. One idea, fully landed.'
     : isReel
     ? 'LENGTH: 100-160 words. Hook + educational context + invitation. Written as if a video is playing.'
     : 'LENGTH: 120-200 words. Hook + developed idea + close with question or quiet observation.';
-
   const prompt = `${contextBlock}Write an Instagram caption for Awaken Zen Spa.
-
 SPECIFIC ANGLE: ${theme || 'Draw from AZS philosophy — nervous system, fascia, skin science, or somatic awareness. Be specific.'}
-
 POST TYPE: ${slot.post_type} | PILLAR: ${slot.pillar.replace('_', ' ')} | DAY: ${slot.day}
-
 ${lengthGuide}
 ${isReel ? 'This caption accompanies a video. Write as if the viewer can see the hands working, the tissue responding, the body settling.' : ''}
-
 Requirements:
 - First line stops the scroll: ask a question the reader hasn't thought to ask, name something they feel but haven't articulated, or make a specific bold claim
 - Use specific anatomical and physiological language: name muscles, systems, mechanisms
 - Draw from: tensegrity, fascial lines, polyvagal theory, skin barrier, lymphatics, breathwork, somatic psychology
 - Never: "treat yourself", "luxurious", "journey", "ultimate relaxation"
 - Close with a question, quiet observation, or one-line booking invitation — never a hard sell
-
 Write ONLY:
 1. The caption text
 2. One blank line
 3. Hashtags on one line (8-10, mix niche/mid/broad, always #awakenzen)`;
-
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 600,
     system: AZS_VOICE,
     messages: [{ role: 'user', content: prompt }],
-  });
-
   if (!response.content?.[0]?.text) { console.error("[generatePost] Bad response:", JSON.stringify(response)); throw new Error("No text in response: " + JSON.stringify(response?.error || response?.type)); }
   const full     = response.content[0].text.trim();
   const parts    = full.split(/\n\s*\n/);
@@ -2720,16 +1848,11 @@ Write ONLY:
     ? parts[parts.length - 1].trim()
     : HASHTAGS[slot.pillar] || '';
   return { caption, hashtags };
-
-}
-
 // ── Search for trending topic ─────────────────────────────────────────────────
 async function researchTrend() {
   const shuffled = [...TRENDING_TOPICS].sort(() => Math.random() - 0.5);
   const topic1 = shuffled[0];
   const topic2 = shuffled[1];
-
-  try {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 600,
@@ -2739,84 +1862,59 @@ Find credible, specific, recent research findings that a massage therapist or es
 Focus on: mechanism of action, specific anatomy and physiology, surprising or counterintuitive findings.
 Write for a knowledgeable practitioner — specific and accurate.`,
       messages: [{ role: 'user', content: `Research these two wellness topics and give me 4-6 specific findings a massage therapist or esthetician could share:\n\n1. ${topic1}\n2. ${topic2}\n\nFor each: what it is, why it matters, one surprising detail.` }],
-    });
-
     const textBlock = response.content.find(b => b.type === 'text');
     if (!textBlock) return null;
     return `RESEARCH: ${topic1} + ${topic2}\n\n${textBlock.text}`;
-  } catch (err) {
     console.error('[generate-content] Trend research error:', err.message);
     return `RESEARCH CONTEXT: Fascia contains more sensory nerve endings than muscle (Schleip et al.) — making it a primary organ of proprioception and interoception. The lymphatic system processes approximately 3L of fluid daily with no intrinsic pump. The skin microbiome consists of approximately 1000 species and its disruption correlates with systemic inflammatory markers.`;
-  }
-}
-
 // ── Get active monthly special from Supabase ──────────────────────────────────
 async function getMonthlySpecial() {
-  try {
     const { data } = await supabase
       .from('monthly_specials')
       .select('*')
       .eq('active', true)
       .single();
-
     if (!data) return null;
     return `${data.title}: ${data.discount_text}. ${data.booking_cta}`;
   } catch {
     return null;
-  }
-}
-
 // ── Calculate scheduled dates for next 7 days ────────────────────────────────
 function getNextWeekDates() {
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Phoenix' }));
   const dates = {};
-
   for (let i = 0; i < 7; i++) {
     const d = new Date(now);
     d.setDate(now.getDate() + i + 1); // start tomorrow
     dates[days[d.getDay()]] = d.toISOString().split('T')[0];
-  }
   return dates;
-}
-
 // ── Main route ────────────────────────────────────────────────────────────────
 app.post('/generate-content', async (req, res) => {
   // Auth check
   const token = req.headers['x-cron-token'] || req.query.token;
   if (token !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
-  }
-
   const startTime = Date.now();
   console.log('[generate-content] Starting weekly content generation…');
-
-  try {
     // Gather context
     const [monthlySpecial, trendingContext, weekDates] = await Promise.all([
       getMonthlySpecial(),
       researchTrend(),
       Promise.resolve(getNextWeekDates()),
     ]);
-
     console.log(`[generate-content] Context: special=${!!monthlySpecial}, trend=${!!trendingContext}`);
-
     const results = [];
     const errors  = [];
-
     // Generate each post in the weekly plan
     for (const slot of WEEKLY_PLAN) {
-      try {
         const scheduledDate = weekDates[slot.day];
         if (!scheduledDate) continue;
-
         // Generate caption
         const { caption, hashtags } = await generatePost(
           slot,
           monthlySpecial,
           trendingContext
         );
-
         // Check if a post for this date+platform already exists in queue
         const { data: existing } = await supabase
           .from('approval_queue')
@@ -2824,13 +1922,8 @@ app.post('/generate-content', async (req, res) => {
           .eq('platform', slot.platform)
           .eq('scheduled_for', scheduledDate)
           .eq('status', 'pending')
-          .single();
-
         if (existing) {
           console.log(`[generate-content] Skipping ${slot.day} ${slot.platform} — already queued`);
-          continue;
-        }
-
         // Also ensure a post_schedule slot exists
         const { data: scheduleRow, error: schedErr } = await supabase
           .from('post_schedule')
@@ -2843,13 +1936,9 @@ app.post('/generate-content', async (req, res) => {
             status:        'pending_approval',
           }, { onConflict: 'scheduled_for,platform' })
           .select()
-          .single();
-
         const postScheduleId = scheduleRow?.id || null;
-
         // Insert into approval_queue
         const { error: qErr } = await supabase
-          .from('approval_queue')
           .insert({
             post_schedule_id:  postScheduleId,
             caption_text:      caption,
@@ -2858,61 +1947,37 @@ app.post('/generate-content', async (req, res) => {
             scheduled_for:     scheduledDate,
             status:            'pending',
             generation_prompt: `${slot.pillar} | ${slot.post_type} | ${slot.theme}`,
-          });
-
         if (qErr) {
           errors.push({ slot: `${slot.day}-${slot.platform}`, error: qErr.message });
-        } else {
           results.push({ day: slot.day, platform: slot.platform, pillar: slot.pillar });
           console.log(`[generate-content] ✓ ${slot.day} ${slot.platform} (${slot.pillar})`);
-        }
-
         // Small delay to avoid rate limiting
         await new Promise(r => setTimeout(r, 800));
-
       } catch (slotErr) {
         console.error(`[generate-content] Error on ${slot.day}:`, slotErr.message);
         errors.push({ slot: `${slot.day}-${slot.platform}`, error: slotErr.message });
-      }
-    }
-
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     console.log(`[generate-content] Done — ${results.length} posts generated in ${elapsed}s`);
-
-    res.json({
       success:   true,
       generated: results.length,
       skipped:   WEEKLY_PLAN.length - results.length - errors.length,
       errors:    errors.length > 0 ? errors : undefined,
       elapsed:   `${elapsed}s`,
-    });
-
-  } catch (err) {
     console.error('[generate-content] Fatal error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Kai webhook running on port ${PORT}`));
-
 // ── Route: Website Chat (Kai chat widget) ─────────────────────────────────────
 app.post("/chat", async (req, res) => {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
-  };
-
-  try {
     const { message, history = [], sessionId } = req.body;
     if (!message) return res.status(400).json({ error: "message required" });
-
     // ── Build Claude messages from history ──
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
       { role: "user", content: message.trim() }
     ];
-
     // ── Tool definitions (same capabilities as Vapi) ──
     const tools = [
       {
@@ -2924,49 +1989,27 @@ app.post("/chat", async (req, res) => {
             serviceKey: { type: "string", description: "Service name e.g. 'deep tissue', 'swedish', 'hot stone'" },
             duration:   { type: "string", description: "Duration in minutes: 60, 90, or 120" },
             date:       { type: "string", description: "Date e.g. 'today', 'tomorrow', 'Friday', or 'April 5'" }
-          },
           required: ["serviceKey", "date"]
-        }
-      },
-      {
         name: "book_appointment",
         description: "Book an appointment for a client",
-        input_schema: {
-          type: "object",
-          properties: {
             serviceKey:     { type: "string" },
             duration:       { type: "string" },
             startAt:        { type: "string", description: "ISO 8601 datetime e.g. 2026-04-05T10:00:00-07:00" },
             customerName:   { type: "string" },
             customerPhone:  { type: "string" },
             customerEmail:  { type: "string" }
-          },
           required: ["serviceKey", "startAt", "customerName", "customerPhone"]
-        }
-      },
-      {
         name: "send_booking_link",
         description: "Text the booking link to the client's phone number",
-        input_schema: {
-          type: "object",
-          properties: {
             phoneNumber: { type: "string", description: "Client phone number" },
             clientName:  { type: "string" }
-          },
           required: ["phoneNumber"]
-        }
-      }
-    ];
-
     const CHAT_SYSTEM = `You are Kai, the AI concierge for Awaken Zen Spa in Mesa, Arizona.
 You are embedded as a chat widget on the AZS website.
-
-ABOUT AZS:
 - Location: 2830 East Brown Road, Suite 10, Mesa, AZ 85213
 - Phone/text: (602) 688-2578
 - Staff: Brant (LMT, owner) and Trevor (LE, esthetician)
 - Booking: awakenzenspa.com/booking
-
 SERVICES AVAILABLE FOR BOOKING:
 - Swedish massage (European Royalty): 60, 90, 120 min
 - Deep tissue (Muscle Mender): 60, 90, 120 min
@@ -2975,7 +2018,6 @@ SERVICES AVAILABLE FOR BOOKING:
 - Hot stone massage (Warm Stone Retreat): 90, 120 min
 - Prenatal massage: 60, 90 min
 - Facials: ask about options
-
 CHAT GUIDELINES:
 - Warm, calm, concise — 2-4 sentences max unless checking availability or booking
 - You CAN check real-time availability and book appointments using your tools
@@ -2983,7 +2025,6 @@ CHAT GUIDELINES:
 - Then check availability, confirm a time with them, then collect name and phone to book
 - Always confirm details before booking
 - After booking, let them know a confirmation text is on its way
-
 BOOKING FLOW:
 1. Ask: what service, what date, how long (60/90/120 min)?
 2. Use check_availability tool → show available times
@@ -2991,32 +2032,22 @@ BOOKING FLOW:
 4. Collect: full name and phone number (email optional)
 5. Use book_appointment tool → confirm booking
 6. Tell them to expect a confirmation text`;
-
     // ── First Claude call ──
-
     let response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 600,
       system: CHAT_SYSTEM,
       tools,
       messages,
-    });
-
     // ── Tool use loop ──
     let toolMessages = [...messages];
     while (response.stop_reason === "tool_use") {
       const toolUseBlock = response.content.find(b => b.type === "tool_use");
       if (!toolUseBlock) break;
-
       const { name, id, input } = toolUseBlock;
       let toolResult = "";
-
-      try {
         if (name === "check_availability") {
           const { serviceKey, duration, date } = input;
           const svcKey = (serviceKey || "").toLowerCase();
           const service = SERVICES[svcKey];
-
           if (!service) {
             toolResult = `I couldn't find that service. Available services: Swedish massage, deep tissue, lymphatic drainage, ashiatsu, hot stone, prenatal massage.`;
           } else {
@@ -3025,7 +2056,6 @@ BOOKING FLOW:
             if (!variationId) {
               const available = Object.keys(service.variations).join(", ");
               toolResult = `${service.label} is available in ${available} minute sessions. Which duration works for you?`;
-            } else {
               const resolved = resolveDate(date || "tomorrow");
               if (!resolved) {
                 toolResult = "I couldn't determine that date — could you clarify?";
@@ -3046,9 +2076,7 @@ BOOKING FLOW:
                         }
                       }]
                     }
-                  }
                 });
-
                 const slots = data.availabilities || [];
                 if (slots.length === 0) {
                   toolResult = `No openings for ${service.label} on that day. Would you like to try a different date?`;
@@ -3059,67 +2087,29 @@ BOOKING FLOW:
                   toolResult = `Available times for ${service.label} (${dur} min) on ${dateDisplay}: ${uniqueTimes.join(", ")}. Which time works best?`;
                   // Attach raw slots for booking reference
                   toolResult += ` [SLOTS_DATA:${JSON.stringify(slots.slice(0,6).map(s => ({ time: formatTimeForDisplay(s.start_at), iso: s.start_at })))}]`;
-                }
-              }
-            }
-          }
-        }
-
         else if (name === "book_appointment") {
           const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = input;
-          const svcKey = (serviceKey || "").toLowerCase();
-          const service = SERVICES[svcKey];
-
-          if (!service) {
             toolResult = "Service not found.";
-          } else {
-            const dur = String(duration || "60");
-            const variationId = service.variations[dur];
-
             // Find or create customer
-            let customerId = null;
             if (customerPhone) {
               const searchRes = await squareRequest("POST", "/customers/search", {
                 query: { filter: { phone_number: { exact: customerPhone } } }
-              });
               if (searchRes.customers?.length > 0) {
                 customerId = searchRes.customers[0].id;
-              } else {
                 const createRes = await squareRequest("POST", "/customers", {
                   given_name: customerName?.split(" ")[0] || "Guest",
                   family_name: customerName?.split(" ").slice(1).join(" ") || "",
                   phone_number: customerPhone,
                   email_address: customerEmail
-                });
                 customerId = createRes.customer?.id;
-              }
-            }
-
-            const bookingRes = await squareRequest("POST", "/bookings", {
-              booking: {
-                location_id: LOCATION_ID,
                 start_at: startAt,
-                customer_id: customerId,
                 customer_note: "Booked via Kai website chat widget.",
-                appointment_segments: [{
-                  service_variation_id: variationId,
-                  service_variation_version: 0,
                   duration_minutes: parseInt(dur),
-                  team_member_id: TEAM_MEMBERS.brant.id
-                }]
-              },
               idempotency_key: `kai-chat-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
-            });
-
-            if (bookingRes.errors) {
               toolResult = "I wasn't able to complete that booking — you can book directly at awakenzenspa.com/booking or text (602) 688-2578.";
-            } else {
-              const booking = bookingRes.booking;
               const displayTime = formatTimeForDisplay(booking.start_at);
               const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
                 timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
-              });
-
               // Fire full confirmation: Supabase upsert + branded email + SMS with token links
               // Non-blocking — chat response is not delayed
               fireConfirmation({
@@ -3136,13 +2126,7 @@ BOOKING FLOW:
                   contactPreference: 'email',   // Chat widget clients may have either; email safer default
                 },
                 bookedSource: 'kai_chat',
-              });
-
               toolResult = `BOOKING_CONFIRMED: ${service.label} on ${displayDate} at ${displayTime} for ${customerName}. Confirmation sent to ${customerPhone || customerEmail}.`;
-            }
-          }
-        }
-
         else if (name === "send_booking_link") {
           const { phoneNumber, clientName } = input;
           if (phoneNumber) {
@@ -3150,18 +2134,11 @@ BOOKING FLOW:
               from: TWILIO_NUMBER,
               to: phoneNumber,
               body: `Hi${clientName ? " " + clientName.split(" ")[0] : ""}! Here's the booking link for Awaken Zen Spa: ${BOOKING_URL} — or text us at (602) 688-2578 for same-day availability. See you soon ✨`
-            });
             toolResult = `Booking link sent to ${phoneNumber}.`;
-          } else {
             toolResult = "No phone number provided.";
-          }
-        }
-
       } catch (toolErr) {
         console.error(`[chat] Tool ${name} error:`, toolErr.message);
         toolResult = "I had trouble with that — please try again or contact us directly at (602) 688-2578.";
-      }
-
       // Add assistant response + tool result to messages and continue
       toolMessages = [
         ...toolMessages,
@@ -3173,42 +2150,26 @@ BOOKING FLOW:
             tool_use_id: id,
             content: toolResult
           }]
-        }
       ];
-
       response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 600,
         system: CHAT_SYSTEM,
         tools,
         messages: toolMessages,
-      });
-    }
-
     // ── Extract final text reply ──
     const reply = response.content.find(b => b.type === "text")?.text
       || "I'm sorry, something went wrong. Please reach us at (602) 688-2578.";
-
     // Strip internal SLOTS_DATA markers from reply
     const cleanReply = reply.replace(/\[SLOTS_DATA:[^\]]+\]/g, "").trim();
-
     res.set(corsHeaders).json({ reply: cleanReply });
-
-  } catch (err) {
     console.error("[chat] Error:", err.message);
     res.status(500).json({ error: "Something went wrong. Please reach us at (602) 688-2578." });
-  }
-});
-
 // ── Route: Chat CORS preflight ────────────────────────────────────────────────
 app.options("/chat", (req, res) => {
   res.set({
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   }).sendStatus(200);
-});
-
 // ── Square webhook — membership service redemption ────────────────────────────
 const { handleSquareWebhook: handleMembershipWebhook } = require('./square-webhook-membership');
 app.post("/square-webhook-membership",
@@ -3217,10 +2178,7 @@ app.post("/square-webhook-membership",
     req.rawBody = req.body.toString();
     req.body = JSON.parse(req.rawBody);
     next();
-  },
   handleMembershipWebhook
-);
-
 // ── Booking confirmation — email + SMS + Supabase upsert ──────────────────────
 // Called internally via fireConfirmation() from all three booking paths:
 //   1. Vapi voice (book_appointment tool)
@@ -3228,5 +2186,3 @@ app.post("/square-webhook-membership",
 //   3. Netlify complete-booking.js + square-book.js (via KAI_WEBHOOK_URL)
 const sendBookingConfirmation = require('./routes/send-booking-confirmation');
 app.use('/confirm-booking', sendBookingConfirmation);
-
-
