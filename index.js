@@ -11,11 +11,14 @@ const Anthropic = require("@anthropic-ai/sdk");
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
+const { renderHtmlToPng }    = require('./jobs/socialImageGen');
+const path = require('path');
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
+app.use('/social-flash/images', express.static(path.join(__dirname, 'public', 'social-images')));
 const emailRoutes = require('./email-handler');
 app.use(emailRoutes);
 const VoiceResponse = twilio.twiml.VoiceResponse;
