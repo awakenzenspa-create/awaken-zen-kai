@@ -13,11 +13,14 @@ const twilio  = require("twilio");
 const { triggerSocialFlash } = require('./jobs/socialPost');
 const { renderHtmlToPng }    = require('./jobs/socialImageGen');
 const path = require('path');
+const { renderHtmlToPng }    = require('./jobs/socialImageGen');
+const path = require('path');
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
+app.use('/social-flash/images', express.static(path.join(__dirname, 'public', 'social-images')));
 app.use('/social-flash/images', express.static(path.join(__dirname, 'public', 'social-images')));
 const emailRoutes = require('./email-handler');
 app.use(emailRoutes);
@@ -431,6 +434,7 @@ async function fireConfirmation({ booking, squareCustomerId, serviceName, servic
                                    durationMins, customer, bookedSource }) {
   const KAI_URL    = process.env.KAI_WEBHOOK_URL || 'https://awaken-zen-kai-production.up.railway.app';
   const KAI_SECRET = process.env.CRON_SECRET     || '';
+  const therapist  = (serviceType === 'facial' || serviceType === 'head_spa') ? 'Trevor' : 'Brant';
   try {
     await fetch(`${KAI_URL}/confirm-booking`, {
       method:  'POST',
@@ -445,7 +449,7 @@ async function fireConfirmation({ booking, squareCustomerId, serviceName, servic
         serviceType:      serviceType || 'massage',
         durationMins:     durationMins || 60,
         startAt:          booking.start_at,
-        therapist:        'Brant',
+        therapist,
         locationId:       LOCATION_ID,
         bookedSource:     bookedSource || 'kai',
         customer,
