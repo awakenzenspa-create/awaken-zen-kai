@@ -25,6 +25,8 @@ const LOCATION_ID     = "TMRQ3D20EFD1X";
 const SQUARE_TOKEN    = process.env.SQUARE_ACCESS_TOKEN;
 const SQUARE_BASE     = "https://connect.squareup.com/v2";
 const SQUARE_VERSION  = "2024-01-18";
+const SITE_URL        = process.env.SITE_URL   || "https://awakenzenspa.com";
+const CRON_SECRET     = process.env.CRON_SECRET || "";
 
 // ── Team Members ──────────────────────────────────────────────────────────────
 const TEAM_MEMBERS = {
@@ -427,7 +429,7 @@ app.post("/book-appointment", async (req, res) => {
       return vapiResponse(res, toolCallId, "I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.");
     }
 
-    const booking = bookingRes.booking;
+    const booking     = bookingRes.booking;
     const displayTime = formatTimeForDisplay(booking.start_at);
     const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
       timeZone: "America/Phoenix",
@@ -435,27 +437,131 @@ app.post("/book-appointment", async (req, res) => {
       month: "long",
       day: "numeric"
     });
+    const firstName = customerName?.split(" ")[0] || "there";
 
-    // Send confirmation SMS with card-on-file link
+    // ── Send "complete your booking" SMS — own try/catch so it never breaks Kai's response
     if (customerPhone) {
-      await twilioClient.messages.create({
-        from: TWILIO_NUMBER,
-        to: customerPhone,
-        body: `Hi ${customerName?.split(" ")[0] || "there"}, you're confirmed at Awaken Zen Spa!\n\n` +
-              `📅 ${service.label}\n` +
-              `🕐 ${displayDate} at ${displayTime}\n` +
-              `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
-              `To complete your booking, please add a card on file for our 24-hour cancellation policy ($25 no-show fee):\n\n` +
-              `${BOOKING_URL}\n\n` +
-              `Questions? Call or text (602) 688-2578. See you soon ✨`
-      });
+      try {
+        const saveCardUrl = `${SITE_URL}/save-card.html` +
+          `?cid=${encodeURIComponent(customerId || "")}` +
+          `&bid=${encodeURIComponent(booking.id)}` +
+          `&svc=${encodeURIComponent(service.label)}` +
+          `&date=${encodeURIComponent(displayDate)}` +
+          `&time=${encodeURIComponent(displayTime)}`;
+
+        await twilioClient.messages.create({
+          from: TWILIO_NUMBER,
+          to: customerPhone,
+          body: `Hi ${firstName}! We've reserved your spot at Awaken Zen Spa.\n\n` +
+                `📅 ${service.label}\n` +
+                `🕐 ${displayDate} at ${displayTime}\n` +
+                `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
+                `One last step — tap the link below to save a card on file (required by our cancellation policy) and you'll be all set:\n\n` +
+                `${saveCardUrl}\n\n` +
+                `Questions? Call or text (602) 688-2578 ✨`
+        });
+        console.log(`[book-appointment] Save-card SMS sent to ${customerPhone} for booking ${booking.id}`);
+      } catch (smsErr) {
+        // SMS failure is non-fatal — booking is confirmed in Square
+        console.error("[book-appointment] SMS send failed:", smsErr.message);
+      }
     }
 
-    vapiResponse(res, toolCallId, `Perfect — you're all booked! ${customerName?.split(" ")[0] || "Your appointment"} is confirmed for ${service.label} on ${displayDate} at ${displayTime}. I've sent a confirmation text to ${customerPhone} with your appointment details and a link to add a card on file for our cancellation policy. We look forward to seeing you at Awaken Zen Spa!`);
+    // Notify owner
+    try {
+      await twilioClient.messages.create({
+        from: TWILIO_NUMBER,
+        to: OWNER_CELL,
+        body: `📋 AZS: Kai booked ${service.label} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`
+      });
+    } catch (e) { /* non-fatal */ }
+
+    vapiResponse(res, toolCallId, `We've got you reserved! ${firstName}, your ${service.label} is held for ${displayDate} at ${displayTime}. I just sent you a text with a link to save a card on file — that's the last step to lock it in. Once that's done you'll get a confirmation. We look forward to seeing you at Awaken Zen Spa!`);
 
   } catch (err) {
     console.error("book-appointment error:", err);
-    vapiResponse(res, toolCallId, "I had trouble completing that booking. Let me send you our booking link instead.");
+    vapiResponse(res, toolCallId, "I had trouble reserving that appointment. Let me send you our booking link instead.");
+  }
+});
+
+// ── Route: Confirm Booking — called by Netlify after card is saved ────────────
+// Netlify functions (complete-booking.js, square-book.js) POST here once Square
+// booking + card-on-file are both confirmed.  Railway sends the final SMS.
+app.post("/confirm-booking", async (req, res) => {
+  // Verify shared secret
+  const incomingSecret = req.headers["x-cron-token"] || "";
+  if (CRON_SECRET && incomingSecret !== CRON_SECRET) {
+    console.warn("[confirm-booking] Unauthorized — bad token");
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const {
+      squareBookingId,
+      squareCustomerId,
+      serviceName,
+      durationMins,
+      startAt,
+      therapist,
+      bookedSource,
+      customer = {}
+    } = req.body;
+
+    const { firstName, lastName, phone, email, contactPreference } = customer;
+    const customerPhone = phone || null;
+    const customerName  = [firstName, lastName].filter(Boolean).join(" ") || "there";
+    const firstNameOnly = firstName || "there";
+
+    // Format date/time for display
+    const startDate = new Date(startAt);
+    const displayTime = startDate.toLocaleTimeString("en-US", {
+      timeZone: "America/Phoenix",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true
+    });
+    const displayDate = startDate.toLocaleDateString("en-US", {
+      timeZone: "America/Phoenix",
+      weekday: "long",
+      month: "long",
+      day: "numeric"
+    });
+
+    console.log(`[confirm-booking] Sending confirmation for booking ${squareBookingId} — ${customerName} — ${serviceName} ${displayDate} ${displayTime}`);
+
+    // Send confirmation SMS
+    if (customerPhone) {
+      try {
+        await twilioClient.messages.create({
+          from: TWILIO_NUMBER,
+          to: customerPhone,
+          body: `You're confirmed at Awaken Zen Spa! 🎉\n\n` +
+                `📅 ${serviceName}${durationMins ? ` (${durationMins} min)` : ""}\n` +
+                `🕐 ${displayDate} at ${displayTime}\n` +
+                `👤 With ${therapist || "your therapist"}\n` +
+                `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
+                `Please arrive 5–10 min early. To cancel or reschedule (24-hr notice required) call or text:\n` +
+                `(602) 688-2578\n\nSee you soon, ${firstNameOnly} ✨`
+        });
+        console.log(`[confirm-booking] Confirmation SMS sent to ${customerPhone}`);
+      } catch (smsErr) {
+        console.error("[confirm-booking] SMS failed:", smsErr.message);
+      }
+    }
+
+    // Notify owner
+    try {
+      await twilioClient.messages.create({
+        from: TWILIO_NUMBER,
+        to: OWNER_CELL,
+        body: `✅ AZS: Booking complete — ${customerName} · ${serviceName} · ${displayDate} at ${displayTime} · Card on file saved. Source: ${bookedSource || "unknown"}`
+      });
+    } catch (e) { /* non-fatal */ }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[confirm-booking] Error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
