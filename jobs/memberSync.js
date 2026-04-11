@@ -129,7 +129,29 @@ async function resolveClientIds(subscriptions, log) {
 // ─── Step 3: Upsert into square_member_sync (audit log) ──────────────────────
 
 async function upsertMemberSync(subscriptions, log) {
-  const rows = subscriptions.map(s => ({
+  // Status priority: active wins over paused wins over cancelled.
+  // A customer can have multiple Square subscriptions (e.g. one active + one
+  // old cancelled). Postgres will refuse to upsert two rows with the same
+  // conflict key in one batch, so deduplicate here — keep the best status per
+  // square_customer_id before sending to Supabase.
+  const STATUS_PRIORITY = { active: 2, paused: 1, cancelled: 0 };
+
+  const bestByCustomer = new Map();
+  for (const s of subscriptions) {
+    const id = s.customer_id;
+    if (!id) continue;
+    const existing = bestByCustomer.get(id);
+    const thisStatus  = normalizeStatus(s.status);
+    const otherStatus = existing ? normalizeStatus(existing.status) : null;
+    if (
+      !existing ||
+      (STATUS_PRIORITY[thisStatus] ?? -1) > (STATUS_PRIORITY[otherStatus] ?? -1)
+    ) {
+      bestByCustomer.set(id, s);
+    }
+  }
+
+  const rows = [...bestByCustomer.values()].map(s => ({
     square_customer_id:  s.customer_id,
     client_id:           s.client_id || null,
     membership_plan:     s.plan_variation_data?.name || s.plan_id || 'AZS Membership',
@@ -144,7 +166,7 @@ async function upsertMemberSync(subscriptions, log) {
     .upsert(rows, { onConflict: 'square_customer_id' });
 
   if (error) throw new Error(`square_member_sync upsert error: ${error.message}`);
-  log.info(`Upserted ${rows.length} rows into square_member_sync`);
+  log.info(`Upserted ${rows.length} rows into square_member_sync (deduped from ${subscriptions.length} subscriptions)`);
   return rows.length;
 }
 

@@ -5,6 +5,7 @@
 
 const express = require("express");
 const twilio  = require("twilio");
+const path    = require("path");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -18,6 +19,21 @@ app.use("/flash-fill", (req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
+
+// ── CORS for social-flash routes ─────────────────────────────────────────────
+app.use("/social-flash", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, x-staff-token, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+// ── Static: serve rendered social images so Meta can curl them ───────────────
+app.use(
+  "/social-flash/images",
+  express.static(path.join(__dirname, "public", "social-images"))
+);
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const twilioClient  = twilio(
@@ -1040,6 +1056,76 @@ app.post("/incoming-sms", async (req, res) => {
   }
 
   res.type("text/xml").send(twiml.toString());
+});
+
+// ── Route: Social Flash — manual post trigger ────────────────────────────────
+app.post("/social-flash/post", async (req, res) => {
+  const { service, serviceName, slotTime, flashPrice, addon } = req.body;
+
+  if (!slotTime || (!service && !serviceName)) {
+    return res.status(400).json({ success: false, error: "slotTime and service are required" });
+  }
+
+  try {
+    const { createClient } = require("@supabase/supabase-js");
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+
+    // Create flash offer record so triggerSocialFlash can track it
+    const { data: offer, error: offerErr } = await supabase
+      .from("flash_offers")
+      .insert({
+        service_name: serviceName || service,
+        slot_time:    slotTime,
+        flash_price:  flashPrice  || null,
+        addon:        addon       || null,
+        status:       "active",
+        created_at:   new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (offerErr) throw new Error(`Could not create flash offer: ${offerErr.message}`);
+
+    const { triggerSocialFlash } = require("./jobs/socialPost.js");
+
+    // Fire-and-forget — posting happens asynchronously (stories/feed on delay)
+    triggerSocialFlash(offer.id, slotTime, {
+      serviceName:        serviceName || service,
+      serviceDescription: "",
+      flashPrice:         flashPrice  || "",
+      regPrice:           "",
+      addon:              addon       || ""
+    }).catch(err =>
+      console.error("[social-flash/post] Background posting error:", err.message)
+    );
+
+    res.json({ success: true, offerId: offer.id, message: "Social flash queued" });
+  } catch (err) {
+    console.error("[social-flash/post] Error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Route: Social Flash — render HTML template → PNG ─────────────────────────
+// Called internally by triggerSocialFlash via socialPost.js → renderTemplate()
+app.post("/social-flash/render", async (req, res) => {
+  const { html, format } = req.body;
+
+  if (!html || !format) {
+    return res.status(400).json({ error: "html and format are required" });
+  }
+
+  try {
+    const { renderHtmlToPng } = require("./jobs/socialImageGen.js");
+    const result = await renderHtmlToPng(html, format);
+    res.json({ imageUrl: result.imageUrl });
+  } catch (err) {
+    console.error("[social-flash/render] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Route: Flash Fill — trigger member sync ───────────────────────────────────
