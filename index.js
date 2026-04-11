@@ -10,6 +10,15 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
+// ── CORS for flash-fill routes (staff portal cross-origin requests) ─────────
+app.use("/flash-fill", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, x-staff-token");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const twilioClient  = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -1031,6 +1040,23 @@ app.post("/incoming-sms", async (req, res) => {
   }
 
   res.type("text/xml").send(twiml.toString());
+});
+
+// ── Route: Flash Fill — trigger member sync ───────────────────────────────────
+app.post("/flash-fill/trigger", async (req, res) => {
+  const token = req.headers["x-staff-token"];
+  if (process.env.STAFF_API_TOKEN && token !== process.env.STAFF_API_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const { runMemberSync } = require("./jobs/memberSync.js");
+    const result = await runMemberSync();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("Flash Fill trigger error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────

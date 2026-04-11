@@ -13,7 +13,7 @@
  *     → sync_member_exclusions() flips flash_group_members.is_member
  */
 
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -29,7 +29,7 @@ const SQUARE_HEADERS = {
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
-export async function runMemberSync() {
+async function runMemberSync() {
   const log = makeLogger();
   log.info('Member sync started');
 
@@ -231,3 +231,5 @@ function makeLogger() {
     error: (msg) => { const e = `[ERROR] ${stamp()} ${msg}`; entries.push(e); console.error(e); },
   };
 }
+
+module.exports = { runMemberSync };

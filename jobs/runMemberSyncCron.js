@@ -9,7 +9,7 @@
  *   Service → Settings → Cron Schedule: 0 7 * * *
  */
 
-import { runMemberSync } from './memberSync.js';
+const { runMemberSync } = require('./memberSync.js');
 
 console.log('=== AZS Member Sync Cron ===');
 
