@@ -1044,11 +1044,6 @@ app.post("/incoming-sms", async (req, res) => {
 
 // ── Route: Flash Fill — trigger member sync ───────────────────────────────────
 app.post("/flash-fill/trigger", async (req, res) => {
-  const token = req.headers["x-staff-token"];
-  if (process.env.STAFF_API_TOKEN && token !== process.env.STAFF_API_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
   try {
     const { runMemberSync } = require("./jobs/memberSync.js");
     const result = await runMemberSync();
