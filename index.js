@@ -6,6 +6,14 @@
 const express = require("express");
 const twilio  = require("twilio");
 const path    = require("path");
+const Anthropic = require("@anthropic-ai/sdk");
+const { createClient } = require("@supabase/supabase-js");
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const supabase  = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -1067,12 +1075,6 @@ app.post("/social-flash/post", async (req, res) => {
   }
 
   try {
-    const { createClient } = require("@supabase/supabase-js");
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
-
     // Create flash offer record so triggerSocialFlash can track it
     const { data: offer, error: offerErr } = await supabase
       .from("flash_offers")
@@ -1143,6 +1145,261 @@ app.post("/flash-fill/trigger", async (req, res) => {
 // ── Email handler (Gmail draft responses) ────────────────────────────────────
 const emailRoutes = require('./email-handler');
 app.use(emailRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AZS Content Engine — Weekly Social Post Generator
+// POST /generate-content  (called by Railway cron, requires x-cron-token header)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AZS_VOICE = `You are writing social media content for Awaken Zen Spa (AZS) — a boutique massage and esthetics spa in Mesa, Arizona.
+
+BRAND VOICE:
+- Warm, grounded, expert — never salesy or pushy
+- Draws from somatic awareness, nervous system science, and holistic wellness
+- Conversational but elevated — like a knowledgeable friend, not a corporate brand
+- Uses sensory language — what things feel like, not just what they are
+- Occasionally references breathwork, fascia, the parasympathetic system, embodiment
+- Short, punchy sentences. White space. Never more than 4-5 sentences per post.
+
+ABOUT AZS:
+- Brant (LMT, owner) and Trevor (LE, esthetician)
+- Mesa, AZ — boutique, appointment-only
+- Services: deep tissue, Swedish, hot stone, Ashiatsu, lymphatic drainage, prenatal massage, custom facials, HydraFacial, dermaplaning, microneedling
+- Philosophy: the body holds everything — stress, grief, tension, joy. Skilled touch is medicine.
+- Booking: awakenzenspa.com or text (602) 688-2578
+
+HASHTAG STRATEGY:
+- Mix: 2-3 niche (#mesaLMT, #arizonaspa, #mesaesthetician), 3-4 mid (#massagetherapy, #skincare), 2-3 broad (#selfcare, #wellness)
+- Never more than 10 hashtags total
+- Always include #awakenzen`;
+
+const WEEKLY_PLAN = [
+  { day: 'Monday',    platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  theme: 'intention setting, beginning of week, presence' },
+  { day: 'Monday',    platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    theme: 'nervous system, stress physiology, why rest matters' },
+  { day: 'Tuesday',   platform: 'instagram_reel', pillar: 'service_showcase', post_type: 'reel',   theme: 'deep tissue massage benefits, muscle tension release' },
+  { day: 'Tuesday',   platform: 'instagram_feed', pillar: 'monthly_special',  post_type: 'promo',  theme: 'current monthly special, booking CTA' },
+  { day: 'Wednesday', platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  theme: 'midweek reset, stillness, letting go' },
+  { day: 'Wednesday', platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    theme: 'fascia, skin health, or trending wellness topic', isTrending: true },
+  { day: 'Thursday',  platform: 'instagram_reel', pillar: 'service_showcase', post_type: 'reel',   theme: 'facial treatments, skin transformation, esthetics' },
+  { day: 'Thursday',  platform: 'instagram_feed', pillar: 'bts',              post_type: 'photo',  theme: 'behind the scenes, spa preparation, intentional space' },
+  { day: 'Friday',    platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  theme: 'treat yourself, self-care friday, permission to rest' },
+  { day: 'Friday',    platform: 'instagram_feed', pillar: 'monthly_special',  post_type: 'promo',  theme: 'weekend booking push, urgency, availability' },
+  { day: 'Friday',    platform: 'instagram_feed', pillar: 'social_proof',     post_type: 'photo',  theme: 'client transformation, results, trust building' },
+  { day: 'Saturday',  platform: 'instagram_feed', pillar: 'bts',              post_type: 'photo',  theme: 'spa ambiance, treatment room, calm environment' },
+  { day: 'Saturday',  platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    theme: 'zen tip, recentering, finding calm in chaos' },
+  { day: 'Sunday',    platform: 'instagram_feed', pillar: 'inspiration',      post_type: 'quote',  theme: 'slow sunday, rest as medicine, preparing for the week' },
+  { day: 'Sunday',    platform: 'instagram_feed', pillar: 'education',        post_type: 'tip',    theme: 'self-care tip, breathwork, body awareness for the week ahead' },
+];
+
+const HASHTAGS = {
+  inspiration:      '#awakenzen #selfcare #wellnesslifestyle #zenlife #mesaspa #restisproductive #slowdown #mindbody #arizonaspa #presentmoment',
+  education:        '#awakenzen #wellnesstip #massagetherapist #skincare #nervoussystem #somatichealing #mesaLMT #therapeuticmassage #bodywork #healthyhabits',
+  service_showcase: '#awakenzen #massagetherapy #deeptissue #facials #mesaspa #arizonaspa #mesaLMT #massagemesa #spaday #treatyourself',
+  monthly_special:  '#awakenzen #mesaspa #massagetherapy #selfcarefriday #arizonaspa #mesaarizona #relaxation #treatyourself #massagemesa #spaday',
+  bts:              '#awakenzen #spatime #behindthescenes #mesaspa #boutiquespa #zenspace #arizonaspa #massagetherapist #esthetician #smallbusiness',
+  social_proof:     '#awakenzen #clientlove #massageresults #skintransformation #mesaspa #realresults #massagetherapy #facialresults #arizonaspa #testimonial',
+};
+
+const TRENDING_TOPICS = [
+  'cortisol and chronic stress 2026',
+  'lymphatic drainage benefits trending',
+  'fascia and emotional release bodywork',
+  'skin barrier health trending skincare',
+  'nervous system regulation techniques',
+  'breathwork benefits science 2025 2026',
+  'HydraFacial vs traditional facial benefits',
+  'massage for sleep quality research',
+  'Ashiatsu barefoot massage benefits',
+  'prenatal massage benefits second trimester',
+];
+
+async function generatePost(slot, monthlySpecial, trendingContext) {
+  const isPromo    = slot.pillar === 'monthly_special';
+  const isTrending = slot.isTrending;
+  const isReel     = slot.post_type === 'reel';
+
+  let contextBlock = '';
+  if (isPromo && monthlySpecial) {
+    contextBlock = `CURRENT MONTHLY SPECIAL:\n${monthlySpecial}\n\n`;
+  }
+  if (isTrending && trendingContext) {
+    contextBlock = `TRENDING TOPIC RESEARCH:\n${trendingContext}\n\n`;
+  }
+
+  const prompt = `${contextBlock}Write a ${slot.platform.replace('_', ' ')} caption for Awaken Zen Spa.
+
+PILLAR: ${slot.pillar.replace('_', ' ')}
+POST TYPE: ${slot.post_type}
+DAY: ${slot.day}
+THEME: ${slot.theme}
+${isReel ? 'NOTE: This is for a Reel — the caption supports a video. Write as if a massage or facial clip is playing.' : ''}
+${slot.pillar === 'social_proof' ? 'NOTE: Write as a social proof post — frame around client results and transformation. Do not fabricate specific client names or quotes.' : ''}
+
+Write ONLY:
+1. The caption (no label, just the text)
+2. A blank line
+3. The hashtags on one line
+
+Keep caption under 100 words. Make it feel human, not generated.`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 400,
+    system: AZS_VOICE,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const full     = response.content[0].text.trim();
+  const parts    = full.split(/\n\s*\n/);
+  const caption  = parts[0]?.trim() || full;
+  const hashtags = parts[parts.length - 1]?.startsWith('#')
+    ? parts[parts.length - 1].trim()
+    : HASHTAGS[slot.pillar] || '';
+
+  return { caption, hashtags };
+}
+
+async function researchTrend() {
+  const topic = TRENDING_TOPICS[Math.floor(Math.random() * TRENDING_TOPICS.length)];
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 400,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      system: 'You are a wellness content researcher. Find recent, credible information about the given topic and summarize the key findings in 3-4 sentences that could inform a spa social media post.',
+      messages: [{ role: 'user', content: `Research this wellness topic for a spa social post: ${topic}` }],
+    });
+    const textBlock = response.content.find(b => b.type === 'text');
+    return textBlock ? `Topic: ${topic}\n\n${textBlock.text}` : null;
+  } catch (err) {
+    console.error('[generate-content] Trend research error:', err.message);
+    return null;
+  }
+}
+
+async function getMonthlySpecial() {
+  try {
+    const { data } = await supabase
+      .from('monthly_specials')
+      .select('*')
+      .eq('active', true)
+      .single();
+    if (!data) return null;
+    return `${data.title}: ${data.discount_text}. ${data.booking_cta}`;
+  } catch {
+    return null;
+  }
+}
+
+function getNextWeekDates() {
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const now  = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Phoenix' }));
+  const dates = {};
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i + 1);
+    dates[days[d.getDay()]] = d.toISOString().split('T')[0];
+  }
+  return dates;
+}
+
+app.post('/generate-content', async (req, res) => {
+  const token = req.headers['x-cron-token'] || req.query.token;
+  if (token !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const startTime = Date.now();
+  console.log('[generate-content] Starting weekly content generation…');
+
+  try {
+    const [monthlySpecial, trendingContext, weekDates] = await Promise.all([
+      getMonthlySpecial(),
+      researchTrend(),
+      Promise.resolve(getNextWeekDates()),
+    ]);
+
+    console.log(`[generate-content] Context: special=${!!monthlySpecial}, trend=${!!trendingContext}`);
+
+    const results = [];
+    const errors  = [];
+
+    for (const slot of WEEKLY_PLAN) {
+      try {
+        const scheduledDate = weekDates[slot.day];
+        if (!scheduledDate) continue;
+
+        const { caption, hashtags } = await generatePost(slot, monthlySpecial, trendingContext);
+
+        const { data: existing } = await supabase
+          .from('approval_queue')
+          .select('id')
+          .eq('platform', slot.platform)
+          .eq('scheduled_for', scheduledDate)
+          .eq('status', 'pending')
+          .single();
+
+        if (existing) {
+          console.log(`[generate-content] Skipping ${slot.day} ${slot.platform} — already queued`);
+          continue;
+        }
+
+        const { data: scheduleRow } = await supabase
+          .from('post_schedule')
+          .upsert({
+            scheduled_for: scheduledDate,
+            platform:      slot.platform,
+            pillar:        slot.pillar,
+            post_type:     slot.post_type,
+            title:         slot.theme.split(',')[0].trim(),
+            status:        'pending_approval',
+          }, { onConflict: 'scheduled_for,platform' })
+          .select()
+          .single();
+
+        const { error: qErr } = await supabase
+          .from('approval_queue')
+          .insert({
+            post_schedule_id:  scheduleRow?.id || null,
+            caption_text:      caption,
+            hashtags:          hashtags,
+            platform:          slot.platform,
+            scheduled_for:     scheduledDate,
+            status:            'pending',
+            generation_prompt: `${slot.pillar} | ${slot.post_type} | ${slot.theme}`,
+          });
+
+        if (qErr) {
+          errors.push({ slot: `${slot.day}-${slot.platform}`, error: qErr.message });
+        } else {
+          results.push({ day: slot.day, platform: slot.platform, pillar: slot.pillar });
+          console.log(`[generate-content] ✓ ${slot.day} ${slot.platform} (${slot.pillar})`);
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+
+      } catch (slotErr) {
+        console.error(`[generate-content] Error on ${slot.day}:`, slotErr.message);
+        errors.push({ slot: `${slot.day}-${slot.platform}`, error: slotErr.message });
+      }
+    }
+
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log(`[generate-content] Done — ${results.length} posts generated in ${elapsed}s`);
+
+    res.json({
+      success:   true,
+      generated: results.length,
+      skipped:   WEEKLY_PLAN.length - results.length - errors.length,
+      errors:    errors.length > 0 ? errors : undefined,
+      elapsed:   `${elapsed}s`,
+    });
+
+  } catch (err) {
+    console.error('[generate-content] Fatal error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
