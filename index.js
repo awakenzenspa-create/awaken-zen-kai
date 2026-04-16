@@ -995,7 +995,7 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 500,
       system: buildSmsSystemPrompt(clientPhone),
       messages
@@ -1139,6 +1139,10 @@ app.post("/flash-fill/trigger", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ── Email handler (Gmail draft responses) ────────────────────────────────────
+const emailRoutes = require('./email-handler');
+app.use(emailRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
