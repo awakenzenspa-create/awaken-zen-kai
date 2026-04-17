@@ -1270,12 +1270,28 @@ app.post("/test-social-post", async (req, res) => {
 
   const results = {};
 
+  // Resolve redirects manually — Meta's CDN won't follow them (e.g. picsum.photos)
+  let resolvedImg = imgUrl;
+  try {
+    let current = imgUrl;
+    for (let hop = 0; hop < 5; hop++) {
+      const r = await fetch(current, { method: "HEAD", redirect: "manual" });
+      const loc = r.headers.get("location");
+      if (!loc) break;
+      current = loc.startsWith("http") ? loc : new URL(loc, current).href;
+    }
+    resolvedImg = current;
+  } catch (e) {
+    console.warn("[test-social-post] redirect resolve failed:", e.message);
+  }
+  results.resolvedImageUrl = resolvedImg;
+
   // ── IG Feed ────────────────────────────────────────────────────────────────
   try {
     const containerRes = await fetch(`${GRAPH}/${IG_ID}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_url: imgUrl, caption, access_token: TOKEN })
+      body: JSON.stringify({ image_url: resolvedImg, caption, access_token: TOKEN })
     });
     const container = await containerRes.json();
     if (!container.id) throw new Error(JSON.stringify(container));
@@ -1292,15 +1308,25 @@ app.post("/test-social-post", async (req, res) => {
   }
 
   // ── Facebook Feed ──────────────────────────────────────────────────────────
+  // Requires META_FB_PAGE_ID to be a Page ID (not a user ID) and
+  // META_PAGE_ACCESS_TOKEN to be a Page Access Token with pages_manage_posts scope.
   try {
     const fbRes = await fetch(`${GRAPH}/${FB_ID}/photos`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: imgUrl, caption, access_token: TOKEN })
+      body: JSON.stringify({ url: resolvedImg, caption, access_token: TOKEN })
     });
     const fbData = await fbRes.json();
-    const fbId = fbData.post_id || fbData.id;
-    results.facebook = fbId ? `posted: ${fbId}` : JSON.stringify(fbData);
+    if (fbData.error) {
+      if (fbData.error.code === 200 && fbData.error.message.includes("publish_actions")) {
+        results.facebook = "error: Token lacks pages_manage_posts permission OR META_FB_PAGE_ID is a personal profile ID, not a Page ID. Check both in Meta Developer console.";
+      } else {
+        results.facebook = JSON.stringify(fbData);
+      }
+    } else {
+      const fbId = fbData.post_id || fbData.id;
+      results.facebook = fbId ? `posted: ${fbId}` : JSON.stringify(fbData);
+    }
   } catch (e) {
     results.facebook = `error: ${e.message}`;
   }
