@@ -1165,6 +1165,7 @@ app.post("/incoming-sms", async (req, res) => {
 
     // Get Claude's response
     let aiResponse = await getKaiSmsResponse(clientPhone, incomingMsg, clientName);
+    console.log(`[SMS] Raw AI response for ${clientPhone}: ${aiResponse.slice(0, 200)}`);
 
     // Process any action commands in the response
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
@@ -1178,14 +1179,17 @@ app.post("/incoming-sms", async (req, res) => {
 
       let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, give the client a natural, warm response.", clientName);
       finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
+      console.log(`[SMS] Final response for ${clientPhone}: ${finalResponse.slice(0, 200)}`);
 
-      addToConversation(clientPhone, "assistant", finalResponse);
-      twiml.message(finalResponse);
+      const safeResponse = finalResponse || "Got it! Let me help — text us what you need or call (602) 688-2578.";
+      addToConversation(clientPhone, "assistant", safeResponse);
+      twiml.message(safeResponse);
     } else {
-      // Clean response of any leftover action syntax
       const cleanResponse = aiResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
-      addToConversation(clientPhone, "assistant", cleanResponse);
-      twiml.message(cleanResponse);
+      console.log(`[SMS] Clean response for ${clientPhone}: ${cleanResponse.slice(0, 200)}`);
+      const safeResponse = cleanResponse || "Got it! Let me help — text us what you need or call (602) 688-2578.";
+      addToConversation(clientPhone, "assistant", safeResponse);
+      twiml.message(safeResponse);
     }
 
   } catch (err) {
