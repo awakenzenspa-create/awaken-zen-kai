@@ -1258,6 +1258,51 @@ app.post("/incoming-sms", async (req, res) => {
   res.type("text/xml").send(twiml.toString());
 });
 
+// ── Route: Facebook OAuth — one-time page token generator ────────────────────
+app.get("/auth/fb", (req, res) => {
+  const APP_ID      = process.env.META_APP_ID;
+  const REDIRECT    = `${process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app"}/auth/fb/callback`;
+  const SCOPE       = "pages_manage_posts,pages_read_engagement,pages_show_list";
+  const url = `https://www.facebook.com/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&scope=${SCOPE}&response_type=code`;
+  res.redirect(url);
+});
+
+app.get("/auth/fb/callback", async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.send("No code returned from Facebook.");
+
+  const APP_ID     = process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_APP_SECRET;
+  const REDIRECT   = `${process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app"}/auth/fb/callback`;
+  const PAGE_ID    = process.env.META_FB_PAGE_ID;
+
+  try {
+    // Exchange code for user token
+    const tokenRes  = await fetch(`https://graph.facebook.com/v19.0/oauth/access_token?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&client_secret=${APP_SECRET}&code=${code}`);
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) return res.send(`Token exchange failed: ${JSON.stringify(tokenData)}`);
+
+    // Exchange user token for page token
+    const pageRes  = await fetch(`https://graph.facebook.com/v19.0/${PAGE_ID}?fields=access_token,name&access_token=${tokenData.access_token}`);
+    const pageData = await pageRes.json();
+
+    // Debug: show scopes
+    const debugRes  = await fetch(`https://graph.facebook.com/debug_token?input_token=${pageData.access_token}&access_token=${pageData.access_token}`);
+    const debugData = await debugRes.json();
+
+    res.send(`<pre>
+Page: ${pageData.name}
+Page Token: ${pageData.access_token}
+
+Scopes: ${JSON.stringify(debugData?.data?.scopes, null, 2)}
+
+Copy the Page Token above into Railway as META_PAGE_ACCESS_TOKEN
+</pre>`);
+  } catch (e) {
+    res.send(`Error: ${e.message}`);
+  }
+});
+
 // ── Route: Test social post — fires a real IG + FB post with provided caption ─
 app.post("/test-social-post", async (req, res) => {
   const { caption, imageUrl } = req.body;
