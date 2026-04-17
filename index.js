@@ -207,6 +207,20 @@ function formatDateForSquare(date) {
   return date.toISOString().split("T")[0]; // YYYY-MM-DD
 }
 
+// Normalize service key — handle hyphens, underscores, camelCase from Claude
+function normalizeServiceKey(key) {
+  if (!key) return "";
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")  // camelCase → spaced
+    .replace(/[-_]+/g, " ")                // hyphens/underscores → space
+    .toLowerCase()
+    .trim();
+}
+
+function lookupService(key) {
+  return SERVICES[normalizeServiceKey(key)] || null;
+}
+
 // Ensure ISO datetime has AZ timezone offset — Square rejects naive datetimes
 function ensureAzTimezone(iso) {
   if (!iso) return iso;
@@ -374,8 +388,7 @@ app.post("/check-availability", async (req, res) => {
     const params = extractParams(req.body);
     const { serviceKey, duration, date, facialKey } = params;
 
-    const svcKey = (serviceKey || "").toLowerCase();
-    const service = SERVICES[svcKey];
+    const service = lookupService(serviceKey);
     if (!service) {
       return vapiResponse(res, toolCallId, "I wasn't able to find that service. Could you clarify which service you're interested in?");
     }
@@ -399,7 +412,7 @@ app.post("/check-availability", async (req, res) => {
     let segmentFilters, endAt, serviceLabel;
 
     if (isCombo) {
-      const facialSvc = SERVICES[(facialKey || "").toLowerCase().trim()];
+      const facialSvc = lookupService(facialKey);
       if (!facialSvc) return vapiResponse(res, toolCallId, "I wasn't able to find that facial. Could you clarify?");
       const facialVariationId = facialSvc.variations["60"];
       if (!facialVariationId) return vapiResponse(res, toolCallId, `${facialSvc.label} isn't available in a 60-minute session.`);
@@ -455,8 +468,7 @@ app.post("/book-appointment", async (req, res) => {
   try {
     const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail, facialKey } = extractParams(req.body);
 
-    const svcKey = (serviceKey || "").toLowerCase();
-    const service = SERVICES[svcKey];
+    const service = lookupService(serviceKey);
     if (!service) return vapiResponse(res, toolCallId, "Service not found.");
 
     const dur = String(duration || "60");
@@ -467,7 +479,7 @@ app.post("/book-appointment", async (req, res) => {
     const isCombo = !!(facialKey && facialKey.trim());
     let facialSvc = null, facialVariationId = null;
     if (isCombo) {
-      facialSvc = SERVICES[(facialKey || "").toLowerCase().trim()];
+      facialSvc = lookupService(facialKey);
       if (!facialSvc) return vapiResponse(res, toolCallId, "Facial service not found.");
       facialVariationId = facialSvc.variations["60"];
       if (!facialVariationId) return vapiResponse(res, toolCallId, "That facial isn't available in a 60-minute session.");
@@ -982,7 +994,7 @@ async function processActions(responseText, clientPhone, clientName) {
 
       else if (action.name === "CHECK_AVAILABILITY") {
         const [svcKey, dur, date, facialKeyArg] = action.args;
-        const service = SERVICES[(svcKey || "").toLowerCase().trim()];
+        const service = lookupService(svcKey);
         if (service) {
           const variationId = service.variations[dur || "60"];
           if (variationId) {
@@ -993,7 +1005,7 @@ async function processActions(responseText, clientPhone, clientName) {
               let segmentFilters, endAt;
 
               if (isCombo) {
-                const facialSvc = SERVICES[(facialKeyArg || "").toLowerCase().trim()];
+                const facialSvc = lookupService(facialKeyArg);
                 const facialVariationId = facialSvc?.variations?.["60"];
                 if (facialSvc && facialVariationId) {
                   const lastStartMin = 20 * 60 - parseInt(dur || "60") - 60;
@@ -1054,7 +1066,7 @@ async function processActions(responseText, clientPhone, clientName) {
 
       else if (action.name === "BOOK_APPOINTMENT") {
         const [svcKey, dur, isoDateTime, name, phone, facialKeyArg] = action.args;
-        const service = SERVICES[(svcKey || "").toLowerCase().trim()];
+        const service = lookupService(svcKey);
         if (service) {
           const variationId = service.variations[dur || "60"];
           if (variationId) {
@@ -1062,7 +1074,7 @@ async function processActions(responseText, clientPhone, clientName) {
             const isCombo = !!(facialKeyArg && facialKeyArg.trim());
             let facialSvc = null, facialVariationId = null;
             if (isCombo) {
-              facialSvc = SERVICES[(facialKeyArg || "").toLowerCase().trim()];
+              facialSvc = lookupService(facialKeyArg);
               facialVariationId = facialSvc?.variations?.["60"] || null;
             }
 
