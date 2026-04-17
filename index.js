@@ -6,6 +6,8 @@
 const express = require("express");
 const twilio  = require("twilio");
 const path    = require("path");
+const https   = require("https");
+const http    = require("http");
 const Anthropic = require("@anthropic-ai/sdk");
 const { createClient } = require("@supabase/supabase-js");
 
@@ -1270,13 +1272,18 @@ app.post("/test-social-post", async (req, res) => {
 
   const results = {};
 
-  // Resolve redirects manually — Meta's CDN won't follow them (e.g. picsum.photos)
+  // Resolve redirects using Node http/https (fetch redirect:"manual" hides Location headers)
+  const getLocation = (url) => new Promise((resolve, reject) => {
+    const mod = url.startsWith("https") ? https : http;
+    const req = mod.get(url, (res) => { res.destroy(); resolve(res.headers["location"] || null); });
+    req.setTimeout(5000, () => { req.destroy(); reject(new Error("timeout")); });
+    req.on("error", reject);
+  });
   let resolvedImg = imgUrl;
   try {
     let current = imgUrl;
     for (let hop = 0; hop < 5; hop++) {
-      const r = await fetch(current, { method: "GET", redirect: "manual" });
-      const loc = r.headers.get("location");
+      const loc = await getLocation(current);
       if (!loc) break;
       current = loc.startsWith("http") ? loc : new URL(loc, current).href;
     }
@@ -1295,6 +1302,18 @@ app.post("/test-social-post", async (req, res) => {
     });
     const container = await containerRes.json();
     if (!container.id) throw new Error(JSON.stringify(container));
+
+    // Poll until IG finishes processing the image (up to ~30s)
+    let statusCode = "IN_PROGRESS";
+    for (let i = 0; i < 10 && statusCode === "IN_PROGRESS"; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const statusRes = await fetch(
+        `${GRAPH}/${container.id}?fields=status_code&access_token=${TOKEN}`
+      );
+      const statusData = await statusRes.json();
+      statusCode = statusData.status_code || "ERROR";
+    }
+    if (statusCode !== "FINISHED") throw new Error(`Container status: ${statusCode}`);
 
     const publishRes = await fetch(`${GRAPH}/${IG_ID}/media_publish`, {
       method: "POST",

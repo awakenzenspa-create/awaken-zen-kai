@@ -174,7 +174,20 @@ async function postIgStory(imageUrl) {
     return null;
   }
 
-  // Step 2: Publish
+  // Step 2: Poll until ready
+  let statusCode = 'IN_PROGRESS';
+  for (let i = 0; i < 10 && statusCode === 'IN_PROGRESS'; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const s = await fetch(`${GRAPH}/${container.id}?fields=status_code&access_token=${PAGE_TOKEN}`);
+    const sd = await s.json();
+    statusCode = sd.status_code || 'ERROR';
+  }
+  if (statusCode !== 'FINISHED') {
+    console.error('[SocialFlash] IG Story container not ready:', statusCode);
+    return null;
+  }
+
+  // Step 3: Publish
   const publishRes = await fetch(
     `${GRAPH}/${IG_ACCOUNT_ID}/media_publish`,
     {
@@ -213,7 +226,20 @@ async function postIgFeed(imageUrl, caption) {
     return null;
   }
 
-  // Step 2: Publish
+  // Step 2: Poll until ready
+  let statusCode = 'IN_PROGRESS';
+  for (let i = 0; i < 10 && statusCode === 'IN_PROGRESS'; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const s = await fetch(`${GRAPH}/${container.id}?fields=status_code&access_token=${PAGE_TOKEN}`);
+    const sd = await s.json();
+    statusCode = sd.status_code || 'ERROR';
+  }
+  if (statusCode !== 'FINISHED') {
+    console.error('[SocialFlash] IG Feed container not ready:', statusCode);
+    return null;
+  }
+
+  // Step 3: Publish
   const publishRes = await fetch(
     `${GRAPH}/${IG_ACCOUNT_ID}/media_publish`,
     {
