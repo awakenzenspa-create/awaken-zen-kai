@@ -1169,10 +1169,12 @@ app.post("/incoming-sms", async (req, res) => {
 
     // Process any action commands in the response
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
+    console.log(`[SMS] After actions for ${clientPhone}: ${aiResponse.slice(0, 300)}`);
 
-    // If response still has action placeholders, run Claude one more time with results
+    // If response still has action placeholders (including failures), run Claude one more time
     if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
-        aiResponse.includes("[Cancel result:") || aiResponse.includes("[Booking result:")) {
+        aiResponse.includes("[Cancel result:") || aiResponse.includes("[Booking result:") ||
+        aiResponse.includes("[Action failed:")) {
 
       addToConversation(clientPhone, "assistant", aiResponse);
       addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client without showing the raw action output.");
