@@ -44,10 +44,12 @@ const express  = require('express');
 const router   = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 
-const BASE_URL   = process.env.BASE_URL  || 'https://awakenzenspa.com';
-const SPA_PHONE  = '(602) 688-2578';
-const SPA_NAME   = 'Awaken Zen Spa';
-const FROM_EMAIL = 'hello@awakenzenspa.com';
+const BASE_URL      = process.env.BASE_URL  || 'https://awakenzenspa.com';
+const SPA_PHONE     = '(602) 688-2578';
+const SPA_NAME      = 'Awaken Zen Spa';
+const FROM_EMAIL    = 'hello@awakenzenspa.com';
+const PORTAL_URL    = `${process.env.BASE_URL || 'https://awakenzenspa.com'}/portal`;
+const TWILIO_MSG_SVC = process.env.TWILIO_MESSAGING_SERVICE_SID || 'MG85a61647a288e50f86d21f447a498f8a';
 
 // ── Supabase (service role) ───────────────────────────────────────────────────
 const sb = createClient(
@@ -89,13 +91,43 @@ function formatTime(iso) {
 }
 
 function addToCalUrl(appt) {
-  // Google Calendar link
   const start = new Date(appt.startAt).toISOString().replace(/[-:]/g, '').replace('.000', '');
   const end   = new Date(new Date(appt.startAt).getTime() + appt.durationMins * 60000)
                   .toISOString().replace(/[-:]/g, '').replace('.000', '');
   const text  = encodeURIComponent(`${appt.serviceName} @ ${SPA_NAME}`);
   const loc   = encodeURIComponent('2830 E. Brown Rd. Suite 10, Mesa, AZ 85213');
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&location=${loc}`;
+}
+
+// ── ICS calendar attachment (triggers Gmail "Add to Calendar" widget) ──────────
+function generateIcs({ serviceName, startAt, durationMins }) {
+  const fmt = iso => new Date(iso).toISOString().replace(/[-:]/g, '').replace('.000Z', 'Z');
+  const start = fmt(startAt);
+  const end   = fmt(new Date(new Date(startAt).getTime() + durationMins * 60000).toISOString());
+  const uid   = `${Date.now()}@awakenzenspa.com`;
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Awaken Zen Spa//EN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `DTSTART:${start}`,
+    `DTEND:${end}`,
+    `SUMMARY:${serviceName} @ Awaken Zen Spa`,
+    'LOCATION:2830 E. Brown Rd. Suite 10\\, Mesa\\, AZ 85213',
+    'DESCRIPTION:Your appointment at Awaken Zen Spa. Questions? Call (602) 688-2578.',
+    `UID:${uid}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+}
+
+// ── Clean Square service name — strip " — Variation - Xm" duplication ─────────
+function cleanServiceName(name) {
+  if (!name) return name;
+  const dashIdx = name.indexOf(' — ');
+  if (dashIdx !== -1) return name.substring(0, dashIdx).trim();
+  return name;
 }
 
 // ── Supabase: upsert client ───────────────────────────────────────────────────
@@ -208,14 +240,26 @@ async function createTokens(clientId, appointmentId, squareBookingId, needsIntak
 }
 
 // ── Resend email ──────────────────────────────────────────────────────────────
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, icsContent }) {
+  const payload = {
+    from: `${SPA_NAME} <${FROM_EMAIL}>`,
+    to: [to],
+    subject,
+    html,
+  };
+  if (icsContent) {
+    payload.attachments = [{
+      filename: 'appointment.ics',
+      content: Buffer.from(icsContent).toString('base64'),
+    }];
+  }
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
       'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
     },
-    body: JSON.stringify({ from: `${SPA_NAME} <${FROM_EMAIL}>`, to: [to], subject, html }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const txt = await res.text();
@@ -228,8 +272,7 @@ async function sendEmail({ to, subject, html }) {
 async function sendSms(to, body) {
   const sid  = process.env.TWILIO_ACCOUNT_SID;
   const auth = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM_NUMBER;
-  if (!sid || !auth || !from) {
+  if (!sid || !auth) {
     console.warn('[confirm] Twilio not configured — skipping SMS');
     return;
   }
@@ -241,7 +284,7 @@ async function sendSms(to, body) {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Basic ${Buffer.from(`${sid}:${auth}`).toString('base64')}`,
       },
-      body: new URLSearchParams({ To: to, From: from, Body: body }).toString(),
+      body: new URLSearchParams({ To: to, MessagingServiceSid: TWILIO_MSG_SVC, Body: body }).toString(),
     }
   );
   if (!res.ok) {
@@ -256,7 +299,7 @@ async function sendSms(to, body) {
 
 function emailHtmlNew({ firstName, serviceName, durationMins, dateStr, timeStr,
                          therapist, addOns, priceUsd, tokens, calUrl }) {
-  const manageUrl = `${BASE_URL}/booking-confirm.html?token=${tokens.manage}`;
+  const manageUrl = PORTAL_URL;
   const intakeUrl = `${BASE_URL}/intake.html?token=${tokens.intake}`;
   const cardUrl   = `${BASE_URL}/save-card.html?token=${tokens.save_card}`;
 
@@ -379,7 +422,7 @@ function emailHtmlNew({ firstName, serviceName, durationMins, dateStr, timeStr,
 
 function emailHtmlReturning({ firstName, serviceName, durationMins, dateStr, timeStr,
                                therapist, addOns, priceUsd, tokens, calUrl }) {
-  const manageUrl = `${BASE_URL}/booking-confirm.html?token=${tokens.manage}`;
+  const manageUrl = PORTAL_URL;
   const addOnHtml = addOns?.length
     ? `<p style="margin:4px 0 0;font-size:12px;color:#8a7f78;">Add-ons: ${addOns.join(', ')}</p>`
     : '';
@@ -471,20 +514,18 @@ function emailHtmlReturning({ firstName, serviceName, durationMins, dateStr, tim
 
 // ── SMS builders ──────────────────────────────────────────────────────────────
 function smsNew({ firstName, serviceName, dateStr, timeStr, tokens }) {
-  const manageUrl = `${BASE_URL}/booking-confirm.html?token=${tokens.manage}`;
   const intakeUrl = tokens.intake ? `${BASE_URL}/intake.html?token=${tokens.intake}` : null;
   const cardUrl   = tokens.save_card ? `${BASE_URL}/save-card.html?token=${tokens.save_card}` : null;
 
-  let msg = `Hi ${firstName}! Your ${serviceName} is confirmed for ${dateStr} at ${timeStr} — Awaken Zen Spa.\n\nArrive 5–10 min early.\n\nManage: ${manageUrl}`;
+  let msg = `Hi ${firstName}! Your ${serviceName} is confirmed for ${dateStr} at ${timeStr} — Awaken Zen Spa.\n\nArrive 5–10 min early.\n\nManage: ${PORTAL_URL}`;
   if (intakeUrl) msg += `\nIntake form: ${intakeUrl}`;
   if (cardUrl)   msg += `\nSave card: ${cardUrl}`;
   msg += `\n\nQuestions? ${SPA_PHONE}`;
   return msg;
 }
 
-function smsReturning({ firstName, serviceName, dateStr, timeStr, tokens }) {
-  const manageUrl = `${BASE_URL}/booking-confirm.html?token=${tokens.manage}`;
-  return `Welcome back ${firstName}! ${serviceName} confirmed — ${dateStr} at ${timeStr}.\n\nArrive 5–10 min early. Manage/cancel: ${manageUrl}\n\nSee you soon — Awaken Zen Spa`;
+function smsReturning({ firstName, serviceName, dateStr, timeStr }) {
+  return `Welcome back ${firstName}! ${serviceName} confirmed — ${dateStr} at ${timeStr}.\n\nArrive 5–10 min early. Manage/cancel: ${PORTAL_URL}\n\nSee you soon — Awaken Zen Spa`;
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -499,6 +540,8 @@ router.post('/', authGuard, async (req, res) => {
     if (!customer || !serviceName || !startAt) {
       return res.status(400).json({ error: 'Missing required fields: customer, serviceName, startAt' });
     }
+
+    const cleanedServiceName = cleanServiceName(serviceName);
 
     // 1. Upsert client
     const { client, isNew } = await upsertClient(customer, squareCustomerId);
@@ -521,14 +564,16 @@ router.post('/', authGuard, async (req, res) => {
     console.log(`[confirm] Tokens created: ${Object.keys(tokens).join(', ')}`);
 
     // 5. Build display strings
-    const dateStr = formatDate(startAt);
-    const timeStr = formatTime(startAt);
-    const calUrl  = addToCalUrl({ startAt, durationMins, serviceName });
-    const pref    = client.contact_preference || 'email';
+    const dateStr  = formatDate(startAt);
+    const timeStr  = formatTime(startAt);
+    const calUrl   = addToCalUrl({ startAt, durationMins, serviceName: cleanedServiceName });
+    const icsContent = generateIcs({ serviceName: cleanedServiceName, startAt, durationMins });
+    const pref     = client.contact_preference || 'email';
 
     const emailArgs = {
       firstName:   client.first_name,
-      serviceName, durationMins,
+      serviceName: cleanedServiceName,
+      durationMins,
       dateStr, timeStr,
       therapist:   therapist || 'Brant',
       addOns:      addOns || [],
@@ -540,9 +585,9 @@ router.post('/', authGuard, async (req, res) => {
     if ((pref === 'email' || pref === 'both') && client.email) {
       const subject = isNew
         ? `Your booking at ${SPA_NAME} is confirmed — a few things before you arrive`
-        : `You're confirmed for ${serviceName} — ${dateStr}`;
+        : `You're confirmed for ${cleanedServiceName} — ${dateStr}`;
       const html = isNew ? emailHtmlNew(emailArgs) : emailHtmlReturning(emailArgs);
-      await sendEmail({ to: client.email, subject, html });
+      await sendEmail({ to: client.email, subject, html, icsContent });
       console.log(`[confirm] Email sent to ${client.email}`);
     }
 
@@ -550,8 +595,8 @@ router.post('/', authGuard, async (req, res) => {
     const phone = cleanPhone(client.phone);
     if ((pref === 'sms' || pref === 'both') && phone) {
       const smsBody = isNew
-        ? smsNew({ firstName: client.first_name, serviceName, dateStr, timeStr, tokens })
-        : smsReturning({ firstName: client.first_name, serviceName, dateStr, timeStr, tokens });
+        ? smsNew({ firstName: client.first_name, serviceName: cleanedServiceName, dateStr, timeStr, tokens })
+        : smsReturning({ firstName: client.first_name, serviceName: cleanedServiceName, dateStr, timeStr });
       await sendSms(phone, smsBody);
       console.log(`[confirm] SMS sent to ${phone}`);
     }
