@@ -1171,25 +1171,36 @@ app.post("/incoming-sms", async (req, res) => {
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
     console.log(`[SMS] After actions for ${clientPhone}: ${aiResponse.slice(0, 300)}`);
 
-    // If response still has action placeholders (including failures), run Claude one more time
+    // Strip action tags from whatever gets stored in history — never store raw results
+    const cleanForHistory = t => t.replace(/\[(?:Bookings found|Availability|Cancel result|Booking result|Action failed):[^\]]*\]/g, "").trim();
+
+    // If response has action result placeholders, do a second Claude pass to convert to natural language
     if (aiResponse.includes("[Bookings found:") || aiResponse.includes("[Availability:") ||
         aiResponse.includes("[Cancel result:") || aiResponse.includes("[Booking result:") ||
         aiResponse.includes("[Action failed:")) {
 
+      // Store the raw result so Claude can read it, then immediately add a strict instruction
       addToConversation(clientPhone, "assistant", aiResponse);
-      addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client. Do NOT use any action commands like [CHECK_AVAILABILITY] or [BOOK_APPOINTMENT] in this response — just reply in plain conversational text.");
+      addToConversation(clientPhone, "user", "Now reply to the client in plain conversational text based on those results. Do not include any action commands or bracket syntax in your reply. Just natural language.");
 
-      let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, reply in plain conversational text only. No action commands.", clientName);
+      let finalResponse = await getKaiSmsResponse(clientPhone, "Reply in plain text only — no action commands.", clientName);
+      // Strip any action tags Claude snuck in anyway
       finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       console.log(`[SMS] Final response for ${clientPhone}: ${finalResponse.slice(0, 200)}`);
 
-      const safeResponse = finalResponse || "Got it! Let me help — text us what you need or call (602) 688-2578.";
+      // Replace the raw result entry in history with clean version before storing final reply
+      const convo = getConversation(clientPhone);
+      if (convo.length >= 2) convo[convo.length - 2].content = cleanForHistory(convo[convo.length - 2].content);
+      // Replace the "now reply" instruction too — not useful for future context
+      convo.splice(convo.length - 1, 1);
+
+      const safeResponse = finalResponse || "Sorry, I hit a snag — can you try again or call us at (602) 688-2578?";
       addToConversation(clientPhone, "assistant", safeResponse);
       twiml.message(safeResponse);
     } else {
       const cleanResponse = aiResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       console.log(`[SMS] Clean response for ${clientPhone}: ${cleanResponse.slice(0, 200)}`);
-      const safeResponse = cleanResponse || "Got it! Let me help — text us what you need or call (602) 688-2578.";
+      const safeResponse = cleanResponse || "Sorry, I hit a snag — can you try again or call us at (602) 688-2578?";
       addToConversation(clientPhone, "assistant", safeResponse);
       twiml.message(safeResponse);
     }
