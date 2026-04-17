@@ -1337,11 +1337,7 @@ app.post("/test-social-post", async (req, res) => {
     });
     const fbData = await fbRes.json();
     if (fbData.error) {
-      if (fbData.error.code === 200 && fbData.error.message.includes("publish_actions")) {
-        results.facebook = "error: Token lacks pages_manage_posts permission OR META_FB_PAGE_ID is a personal profile ID, not a Page ID. Check both in Meta Developer console.";
-      } else {
-        results.facebook = JSON.stringify(fbData);
-      }
+      results.facebook = JSON.stringify(fbData);
     } else {
       const fbId = fbData.post_id || fbData.id;
       results.facebook = fbId ? `posted: ${fbId}` : JSON.stringify(fbData);
