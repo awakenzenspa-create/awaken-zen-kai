@@ -1275,7 +1275,7 @@ app.post("/test-social-post", async (req, res) => {
   try {
     let current = imgUrl;
     for (let hop = 0; hop < 5; hop++) {
-      const r = await fetch(current, { method: "HEAD", redirect: "manual" });
+      const r = await fetch(current, { method: "GET", redirect: "manual" });
       const loc = r.headers.get("location");
       if (!loc) break;
       current = loc.startsWith("http") ? loc : new URL(loc, current).href;
