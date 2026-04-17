@@ -35,7 +35,10 @@ async function triggerSocialFlash(offerId, slotTime, serviceData) {
       // 1. IG Story immediately
       await postToChannel('ig_story', offerId, slotTime, serviceData);
 
-      // FB cross-posts automatically via Instagram's cross-post setting
+      // 2. FB feed 30 min later
+      setTimeout(async () => {
+        await postToChannel('fb_feed', offerId, slotTime, serviceData);
+      }, 30 * 60 * 1000);
 
       // 3. IG feed 2 hrs later — only if slot still open
       setTimeout(async () => {
@@ -48,8 +51,12 @@ async function triggerSocialFlash(offerId, slotTime, serviceData) {
       }, 2 * 60 * 60 * 1000);
 
     } else {
-      // Same-day urgent: Story only (FB cross-posts via Instagram's cross-post setting)
+      // Same-day urgent: Story + FB immediately
       await postToChannel('ig_story', offerId, slotTime, serviceData);
+
+      setTimeout(async () => {
+        await postToChannel('fb_feed', offerId, slotTime, serviceData);
+      }, 5 * 60 * 1000);
     }
 
   } catch (err) {
