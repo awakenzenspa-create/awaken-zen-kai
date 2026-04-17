@@ -359,7 +359,8 @@ function filterSlots(slots) {
 app.post("/check-availability", async (req, res) => {
   const toolCallId = extractToolCallId(req.body);
   try {
-    const { serviceKey, duration, date } = extractParams(req.body);
+    const params = extractParams(req.body);
+    const { serviceKey, duration, date, facialKey } = params;
 
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
@@ -379,37 +380,56 @@ app.post("/check-availability", async (req, res) => {
       return vapiResponse(res, toolCallId, "I couldn't determine that date — could you clarify?");
     }
     const dateStr = formatDateForSquare(resolved);
+    const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
+    // ── Combo: massage + facial ───────────────────────────────────────────────
+    const isCombo = !!(facialKey && facialKey.trim());
+    let segmentFilters, endAt, serviceLabel;
+
+    if (isCombo) {
+      const facialSvc = SERVICES[(facialKey || "").toLowerCase().trim()];
+      if (!facialSvc) return vapiResponse(res, toolCallId, "I wasn't able to find that facial. Could you clarify?");
+      const facialVariationId = facialSvc.variations["60"];
+      if (!facialVariationId) return vapiResponse(res, toolCallId, `${facialSvc.label} isn't available in a 60-minute session.`);
+
+      // Last safe start = close (8 PM) - massage dur - 60 min facial
+      const lastStartMin = 20 * 60 - parseInt(dur) - 60;
+      const lsHour = String(Math.floor(lastStartMin / 60)).padStart(2, "0");
+      const lsMin  = String(lastStartMin % 60).padStart(2, "0");
+      endAt = `${dateStr}T${lsHour}:${lsMin}:00-07:00`;
+
+      segmentFilters = [
+        { service_variation_id: variationId,       team_member_id_filter: { any: [TEAM_MEMBERS.brant.id]  } },
+        { service_variation_id: facialVariationId, team_member_id_filter: { any: [TEAM_MEMBERS.trevor.id] } }
+      ];
+      serviceLabel = `${service.label} + ${facialSvc.label}`;
+    } else {
+      endAt = `${dateStr}T19:00:00-07:00`;
+      segmentFilters = [
+        { service_variation_id: variationId, team_member_id_filter: { any: Object.values(TEAM_MEMBERS).map(m => m.id) } }
+      ];
+      serviceLabel = service.label;
+    }
 
     const data = await squareRequest("POST", "/bookings/availability/search", {
       query: {
         filter: {
-          start_at_range: {
-            start_at: `${dateStr}T08:00:00-07:00`,
-            end_at:   `${dateStr}T19:00:00-07:00`
-          },
+          start_at_range: { start_at: `${dateStr}T08:00:00-07:00`, end_at: endAt },
           location_id: LOCATION_ID,
-          segment_filters: [
-            {
-              service_variation_id: variationId,
-              team_member_id_filter: {
-                any: Object.values(TEAM_MEMBERS).map(m => m.id)
-              }
-            }
-          ]
+          segment_filters: segmentFilters
         }
       }
     });
 
     const slots = data.availabilities || [];
     if (slots.length === 0) {
-      return vapiResponse(res, toolCallId, `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`);
+      return vapiResponse(res, toolCallId, `We don't have any openings for ${serviceLabel} on that day. Would you like to try a different day?`);
     }
 
     const uniqueTimes = filterSlots(slots);
     const timeList = uniqueTimes.join(", ");
-    const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
-    vapiResponse(res, toolCallId, `For ${service.label} (${dur} min) on ${dateDisplay}, we have: ${timeList}. Which works best for you?`);
+    vapiResponse(res, toolCallId, `For ${serviceLabel} (${isCombo ? `${dur} min massage + 60 min facial` : `${dur} min`}) on ${dateDisplay}, we have: ${timeList}. Which works best for you?`);
 
   } catch (err) {
     console.error("check-availability error:", err);
@@ -421,7 +441,7 @@ app.post("/check-availability", async (req, res) => {
 app.post("/book-appointment", async (req, res) => {
   const toolCallId = extractToolCallId(req.body);
   try {
-    const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail } = extractParams(req.body);
+    const { serviceKey, duration, startAt, customerName, customerPhone, customerEmail, facialKey } = extractParams(req.body);
 
     const svcKey = (serviceKey || "").toLowerCase();
     const service = SERVICES[svcKey];
@@ -430,6 +450,16 @@ app.post("/book-appointment", async (req, res) => {
     const dur = String(duration || "60");
     const variationId = service.variations[dur];
     if (!variationId) return vapiResponse(res, toolCallId, "Duration not available for this service.");
+
+    // ── Combo: resolve facial service if provided ─────────────────────────────
+    const isCombo = !!(facialKey && facialKey.trim());
+    let facialSvc = null, facialVariationId = null;
+    if (isCombo) {
+      facialSvc = SERVICES[(facialKey || "").toLowerCase().trim()];
+      if (!facialSvc) return vapiResponse(res, toolCallId, "Facial service not found.");
+      facialVariationId = facialSvc.variations["60"];
+      if (!facialVariationId) return vapiResponse(res, toolCallId, "That facial isn't available in a 60-minute session.");
+    }
 
     // Create or find customer
     let customerId = null;
@@ -454,6 +484,26 @@ app.post("/book-appointment", async (req, res) => {
       }
     }
 
+    // ── Build appointment segments ─────────────────────────────────────────────
+    const appointmentSegments = [
+      {
+        service_variation_id: variationId,
+        service_variation_version: 0,
+        duration_minutes: parseInt(dur),
+        team_member_id: TEAM_MEMBERS.brant.id
+      }
+    ];
+    if (isCombo) {
+      appointmentSegments.push({
+        service_variation_id: facialVariationId,
+        service_variation_version: 0,
+        duration_minutes: 60,
+        team_member_id: TEAM_MEMBERS.trevor.id
+      });
+    }
+
+    const serviceLabel = isCombo ? `${service.label} + ${facialSvc.label}` : service.label;
+
     // Create booking
     const bookingRes = await squareRequest("POST", "/bookings", {
       booking: {
@@ -461,14 +511,7 @@ app.post("/book-appointment", async (req, res) => {
         start_at: startAt,
         customer_id: customerId,
         customer_note: `Booked via Kai AI phone concierge. Card on file required per cancellation policy.`,
-        appointment_segments: [
-          {
-            service_variation_id: variationId,
-            service_variation_version: 0,
-            duration_minutes: parseInt(dur),
-            team_member_id: TEAM_MEMBERS.brant.id
-          }
-        ]
+        appointment_segments: appointmentSegments
       },
       idempotency_key: `kai-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
     });
@@ -494,7 +537,7 @@ app.post("/book-appointment", async (req, res) => {
         const saveCardUrl = `${SITE_URL}/save-card.html` +
           `?cid=${encodeURIComponent(customerId || "")}` +
           `&bid=${encodeURIComponent(booking.id)}` +
-          `&svc=${encodeURIComponent(service.label)}` +
+          `&svc=${encodeURIComponent(serviceLabel)}` +
           `&date=${encodeURIComponent(displayDate)}` +
           `&time=${encodeURIComponent(displayTime)}`;
 
@@ -502,7 +545,7 @@ app.post("/book-appointment", async (req, res) => {
           from: TWILIO_NUMBER,
           to: customerPhone,
           body: `Hi ${firstName}! We've reserved your spot at Awaken Zen Spa.\n\n` +
-                `📅 ${service.label}\n` +
+                `📅 ${serviceLabel}\n` +
                 `🕐 ${displayDate} at ${displayTime}\n` +
                 `📍 2830 E Brown Rd, Suite 10, Mesa AZ\n\n` +
                 `One last step — tap the link below to save a card on file (required by our cancellation policy) and you'll be all set:\n\n` +
@@ -521,11 +564,11 @@ app.post("/book-appointment", async (req, res) => {
       await twilioClient.messages.create({
         from: TWILIO_NUMBER,
         to: OWNER_CELL,
-        body: `📋 AZS: Kai booked ${service.label} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`
+        body: `📋 AZS: Kai booked ${serviceLabel} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`
       });
     } catch (e) { /* non-fatal */ }
 
-    vapiResponse(res, toolCallId, `We've got you reserved! ${firstName}, your ${service.label} is held for ${displayDate} at ${displayTime}. I just sent you a text with a link to save a card on file — that's the last step to lock it in. Once that's done you'll get a confirmation. We look forward to seeing you at Awaken Zen Spa!`);
+    vapiResponse(res, toolCallId, `We've got you reserved! ${firstName}, your ${serviceLabel} is held for ${displayDate} at ${displayTime}. I just sent you a text with a link to save a card on file — that's the last step to lock it in. Once that's done you'll get a confirmation. We look forward to seeing you at Awaken Zen Spa!`);
 
   } catch (err) {
     console.error("book-appointment error:", err);
@@ -681,6 +724,12 @@ Never ask for an email address on a voice call. Email is not collected over the 
 
 NAMES:
 When a caller gives their name, repeat it back exactly as they said it — do not alter spelling or add letters. If they say "Brant", confirm "Brant". If they say "Jan", confirm "Jan". Never guess at spelling.
+
+COMBO BOOKINGS (massage + facial):
+When a caller wants both a massage and a facial, check availability and book as a combo. Pass both serviceKey and facialKey. Brant does the massage, Trevor does the facial. The facial is always 60 min. Never offer a combo start time later than:
+- 60 min massage: 6:00 PM
+- 90 min massage: 5:30 PM
+- 120 min massage: 5:00 PM
 
 AFTER A BOOKING IS CONFIRMED:
 Always tell the caller: "To hold your spot, we require a card on file for our no-show policy — I'm sending you a secure link right now via text to save your card. It only takes a second." Then trigger the save-card SMS tool.`
@@ -838,10 +887,19 @@ When someone wants to cancel:
 
 ACTION COMMANDS (use these in your response when needed):
 [GET_BOOKINGS] — look up client's upcoming appointments
-[CHECK_AVAILABILITY: serviceKey|duration|date] — check open slots
-[BOOK_APPOINTMENT: serviceKey|duration|isoDateTime|customerName|customerPhone] — create booking
+[CHECK_AVAILABILITY: massageKey|duration|date] — single service
+[CHECK_AVAILABILITY: massageKey|duration|date|facialKey] — combo (massage + facial back-to-back)
+[BOOK_APPOINTMENT: massageKey|duration|isoDateTime|customerName|customerPhone] — single service
+[BOOK_APPOINTMENT: massageKey|duration|isoDateTime|customerName|customerPhone|facialKey] — combo
 [CANCEL_BOOKING: bookingId|version] — cancel a booking
 [SEND_BOOKING_LINK] — send the booking link via text
+
+COMBO BOOKINGS:
+When a client wants both a massage and a facial, use the combo form. Brant always does the massage, Trevor always does the facial. The facial is always 60 min. Last available start times for combos:
+- 60 min massage + 60 min facial: 6:00 PM
+- 90 min massage + 60 min facial: 5:30 PM
+- 120 min massage + 60 min facial: 5:00 PM
+Do not offer combo start times later than these cutoffs.
 
 SERVICES (common ones):
 swedish/european royalty: 60/90/120 min — $85/$115/$145
@@ -858,6 +916,7 @@ microneedling: 60 min — $130
 TONE:
 - Warm and personal, like a trusted front desk person who texts back
 - Brief — this is text, not email. Use contractions.
+- Keep every response under 300 characters whenever possible. Never exceed 2 SMS segments (~320 characters). If you need to share a link, that counts toward the limit — write less prose around it.
 - Avoid stiff openers like "Certainly!" or "Of course!" — just respond naturally
 - Never ask for an email address over text — it's handled elsewhere
 - Sign off warmly on first message: "— Kai at Awaken Zen"`;
@@ -893,7 +952,7 @@ async function processActions(responseText, clientPhone, clientName) {
       }
 
       else if (action.name === "CHECK_AVAILABILITY") {
-        const [svcKey, dur, date] = action.args;
+        const [svcKey, dur, date, facialKeyArg] = action.args;
         const service = SERVICES[(svcKey || "").toLowerCase().trim()];
         if (service) {
           const variationId = service.variations[dur || "60"];
@@ -901,18 +960,35 @@ async function processActions(responseText, clientPhone, clientName) {
             const resolved = resolveDate(date || "tomorrow");
             if (resolved) {
               const dateStr = formatDateForSquare(resolved);
+              const isCombo = !!(facialKeyArg && facialKeyArg.trim());
+              let segmentFilters, endAt;
+
+              if (isCombo) {
+                const facialSvc = SERVICES[(facialKeyArg || "").toLowerCase().trim()];
+                const facialVariationId = facialSvc?.variations?.["60"];
+                if (facialSvc && facialVariationId) {
+                  const lastStartMin = 20 * 60 - parseInt(dur || "60") - 60;
+                  const lsHour = String(Math.floor(lastStartMin / 60)).padStart(2, "0");
+                  const lsMin  = String(lastStartMin % 60).padStart(2, "0");
+                  endAt = `${dateStr}T${lsHour}:${lsMin}:00-07:00`;
+                  segmentFilters = [
+                    { service_variation_id: variationId,       team_member_id_filter: { any: [TEAM_MEMBERS.brant.id]  } },
+                    { service_variation_id: facialVariationId, team_member_id_filter: { any: [TEAM_MEMBERS.trevor.id] } }
+                  ];
+                }
+              }
+
+              if (!segmentFilters) {
+                endAt = `${dateStr}T19:00:00-07:00`;
+                segmentFilters = [{ service_variation_id: variationId, team_member_id_filter: { any: Object.values(TEAM_MEMBERS).map(m => m.id) } }];
+              }
+
               const data = await squareRequest("POST", "/bookings/availability/search", {
                 query: {
                   filter: {
-                    start_at_range: {
-                      start_at: `${dateStr}T08:00:00-07:00`,
-                      end_at:   `${dateStr}T19:00:00-07:00`
-                    },
+                    start_at_range: { start_at: `${dateStr}T08:00:00-07:00`, end_at: endAt },
                     location_id: LOCATION_ID,
-                    segment_filters: [{
-                      service_variation_id: variationId,
-                      team_member_id_filter: { any: Object.values(TEAM_MEMBERS).map(m => m.id) }
-                    }]
+                    segment_filters: segmentFilters
                   }
                 }
               });
@@ -948,11 +1024,19 @@ async function processActions(responseText, clientPhone, clientName) {
       }
 
       else if (action.name === "BOOK_APPOINTMENT") {
-        const [svcKey, dur, isoDateTime, name, phone] = action.args;
+        const [svcKey, dur, isoDateTime, name, phone, facialKeyArg] = action.args;
         const service = SERVICES[(svcKey || "").toLowerCase().trim()];
         if (service) {
           const variationId = service.variations[dur || "60"];
           if (variationId) {
+            // ── Combo: resolve facial if provided ─────────────────────────────
+            const isCombo = !!(facialKeyArg && facialKeyArg.trim());
+            let facialSvc = null, facialVariationId = null;
+            if (isCombo) {
+              facialSvc = SERVICES[(facialKeyArg || "").toLowerCase().trim()];
+              facialVariationId = facialSvc?.variations?.["60"] || null;
+            }
+
             // Find/create customer
             let customerId = null;
             const searchRes = await squareRequest("POST", "/customers/search", {
@@ -968,31 +1052,37 @@ async function processActions(responseText, clientPhone, clientName) {
               customerId = createRes.customer?.id;
             }
 
+            const appointmentSegments = [
+              { service_variation_id: variationId, service_variation_version: 0, duration_minutes: parseInt(dur || "60"), team_member_id: TEAM_MEMBERS.brant.id }
+            ];
+            if (isCombo && facialVariationId) {
+              appointmentSegments.push({
+                service_variation_id: facialVariationId, service_variation_version: 0, duration_minutes: 60, team_member_id: TEAM_MEMBERS.trevor.id
+              });
+            }
+
+            const serviceLabel = (isCombo && facialSvc) ? `${service.label} + ${facialSvc.label}` : service.label;
+
             const bookingRes = await squareRequest("POST", "/bookings", {
               booking: {
                 location_id: LOCATION_ID,
                 start_at: isoDateTime,
                 customer_id: customerId,
                 customer_note: "Booked via Kai SMS concierge.",
-                appointment_segments: [{
-                  service_variation_id: variationId,
-                  service_variation_version: 0,
-                  duration_minutes: parseInt(dur || "60"),
-                  team_member_id: TEAM_MEMBERS.brant.id
-                }]
+                appointment_segments: appointmentSegments
               },
               idempotency_key: `sms-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
             });
 
-            if (bookingRes.errors) {
-              result = `Error: ${bookingRes.errors[0]?.detail || "Could not book"}`;
+            const booking = bookingRes.booking;
+            if (!booking) {
+              result = `Error: ${bookingRes.errors?.[0]?.detail || "Could not book"}`;
             } else {
-              const booking = bookingRes.booking;
               const displayTime = formatTimeForDisplay(booking.start_at);
               const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
                 timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
               });
-              result = `Booked! ${service.label} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
+              result = `Booked! ${serviceLabel} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
             }
           }
         }
@@ -1036,7 +1126,7 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 500,
+      max_tokens: 200,
       system: buildSmsSystemPrompt(clientPhone),
       messages
     })
