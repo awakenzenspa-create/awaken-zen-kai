@@ -1330,10 +1330,10 @@ app.post("/test-social-post", async (req, res) => {
   // Requires META_FB_PAGE_ID to be a Page ID (not a user ID) and
   // META_PAGE_ACCESS_TOKEN to be a Page Access Token with pages_manage_posts scope.
   try {
-    const fbRes = await fetch(`${GRAPH}/${FB_ID}/photos`, {
+    const fbRes = await fetch(`${GRAPH}/${FB_ID}/feed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: resolvedImg, caption, access_token: TOKEN })
+      body: JSON.stringify({ message: caption, link: resolvedImg, access_token: TOKEN })
     });
     const fbData = await fbRes.json();
     if (fbData.error) {
