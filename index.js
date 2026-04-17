@@ -50,6 +50,7 @@ const twilioClient  = twilio(
 );
 
 const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
+const TWILIO_MSG_SVC  = process.env.TWILIO_MESSAGING_SERVICE_SID || "MG85a61647a288e50f86d21f447a498f8a";
 const VAPI_NUMBER     = process.env.VAPI_PHONE_NUMBER;
 const OWNER_CELL      = "+16232196907";
 const BOOKING_URL     = "https://awakenzenspa.com/booking";
@@ -307,7 +308,7 @@ app.post("/send-booking-link", async (req, res) => {
       return vapiResponse(res, toolCallId, "Booking link ready — please ask the caller for their phone number to send the link.");
     }
     await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
+      messagingServiceSid: TWILIO_MSG_SVC,
       to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Here's your booking link:\n\n${BOOKING_URL}\n\nSee you soon ✨`
     });
@@ -328,7 +329,7 @@ app.post("/send-gift-card-link", async (req, res) => {
       return vapiResponse(res, toolCallId, "Gift card link ready — please ask the caller for their phone number.");
     }
     await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
+      messagingServiceSid: TWILIO_MSG_SVC,
       to: phoneNumber,
       body: `Hi, it's Awaken Zen Spa! Gift cards available here:\n\n${GIFT_CARD_URL}\n\nA beautiful gift ✨`
     });
@@ -542,7 +543,7 @@ app.post("/book-appointment", async (req, res) => {
           `&time=${encodeURIComponent(displayTime)}`;
 
         await twilioClient.messages.create({
-          from: TWILIO_NUMBER,
+          messagingServiceSid: TWILIO_MSG_SVC,
           to: customerPhone,
           body: `Hi ${firstName}! We've reserved your spot at Awaken Zen Spa.\n\n` +
                 `📅 ${serviceLabel}\n` +
@@ -562,7 +563,7 @@ app.post("/book-appointment", async (req, res) => {
     // Notify owner
     try {
       await twilioClient.messages.create({
-        from: TWILIO_NUMBER,
+        messagingServiceSid: TWILIO_MSG_SVC,
         to: OWNER_CELL,
         body: `📋 AZS: Kai booked ${serviceLabel} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`
       });
@@ -625,7 +626,7 @@ app.post("/confirm-booking", async (req, res) => {
     if (customerPhone) {
       try {
         await twilioClient.messages.create({
-          from: TWILIO_NUMBER,
+          messagingServiceSid: TWILIO_MSG_SVC,
           to: customerPhone,
           body: `You're confirmed at Awaken Zen Spa! 🎉\n\n` +
                 `📅 ${serviceName}${durationMins ? ` (${durationMins} min)` : ""}\n` +
@@ -644,7 +645,7 @@ app.post("/confirm-booking", async (req, res) => {
     // Notify owner
     try {
       await twilioClient.messages.create({
-        from: TWILIO_NUMBER,
+        messagingServiceSid: TWILIO_MSG_SVC,
         to: OWNER_CELL,
         body: `✅ AZS: Booking complete — ${customerName} · ${serviceName} · ${displayDate} at ${displayTime} · Card on file saved. Source: ${bookedSource || "unknown"}`
       });
@@ -665,7 +666,7 @@ app.post("/send-booking-confirmation", async (req, res) => {
     const phoneNumber = params.phoneNumber || params.phone_number;
     const appointmentDetails = params.appointmentDetails || params.appointment_details;
     await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
+      messagingServiceSid: TWILIO_MSG_SVC,
       to: phoneNumber,
       body: `Hi! Your Awaken Zen Spa appointment is confirmed.\n\n${appointmentDetails}\n\nPlease add a card on file:\n${BOOKING_URL}\n\nQuestions? (602) 688-2578 ✨`
     });
@@ -1015,7 +1016,7 @@ async function processActions(responseText, clientPhone, clientName) {
           result = "Booking cancelled successfully.";
           // Notify owner
           await twilioClient.messages.create({
-            from: TWILIO_NUMBER,
+            messagingServiceSid: TWILIO_MSG_SVC,
             to: OWNER_CELL,
             body: `📋 AZS: Kai cancelled booking ${bookingId} for ${clientPhone} via SMS.`
           });
@@ -1091,7 +1092,7 @@ async function processActions(responseText, clientPhone, clientName) {
 
       else if (action.name === "SEND_BOOKING_LINK") {
         await twilioClient.messages.create({
-          from: TWILIO_NUMBER,
+          messagingServiceSid: TWILIO_MSG_SVC,
           to: clientPhone,
           body: `Here's the Awaken Zen Spa booking link:\n${BOOKING_URL}`
         });
