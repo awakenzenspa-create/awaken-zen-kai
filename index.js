@@ -339,6 +339,22 @@ app.post("/send-gift-card-link", async (req, res) => {
   }
 });
 
+// ── Slot filtering: prefer on-the-hour, cap at 3, drop :15/:45 intervals ──────
+function filterSlots(slots) {
+  // Prefer on-the-hour slots only (drop :15 and :45)
+  const hourSlots = slots.filter(s => {
+    const azMin = new Date(new Date(s.start_at).getTime() - 7 * 60 * 60 * 1000).getUTCMinutes();
+    return azMin === 0;
+  });
+  // Fall back to :00 or :30 if we don't have enough on-the-hour slots
+  const halfSlots = slots.filter(s => {
+    const azMin = new Date(new Date(s.start_at).getTime() - 7 * 60 * 60 * 1000).getUTCMinutes();
+    return azMin === 0 || azMin === 30;
+  });
+  const pool = hourSlots.length >= 2 ? hourSlots : (halfSlots.length > 0 ? halfSlots : slots);
+  return [...new Set(pool.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 3);
+}
+
 // ── Route: Check Availability ─────────────────────────────────────────────────
 app.post("/check-availability", async (req, res) => {
   const toolCallId = extractToolCallId(req.body);
@@ -389,11 +405,11 @@ app.post("/check-availability", async (req, res) => {
       return vapiResponse(res, toolCallId, `We don't have any openings for ${service.label} on that day. Would you like to try a different day?`);
     }
 
-    const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
+    const uniqueTimes = filterSlots(slots);
     const timeList = uniqueTimes.join(", ");
     const dateDisplay = resolved.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
-    vapiResponse(res, toolCallId, `For ${service.label} (${dur} min) on ${dateDisplay}, we have availability at: ${timeList}. Which time works best for you?`);
+    vapiResponse(res, toolCallId, `For ${service.label} (${dur} min) on ${dateDisplay}, we have: ${timeList}. Which works best for you?`);
 
   } catch (err) {
     console.error("check-availability error:", err);
@@ -457,12 +473,12 @@ app.post("/book-appointment", async (req, res) => {
       idempotency_key: `kai-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
     });
 
-    if (bookingRes.errors) {
+    // Success = Square returned a booking object; errors field alone is not definitive
+    const booking = bookingRes.booking;
+    if (!booking) {
       console.error("Booking error:", bookingRes.errors);
       return vapiResponse(res, toolCallId, "I wasn't able to complete that booking — please use our booking page at awakenzenspa.com/booking or I can send you the link.");
     }
-
-    const booking     = bookingRes.booking;
     const displayTime = formatTimeForDisplay(booking.start_at);
     const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
       timeZone: "America/Phoenix",
@@ -655,7 +671,19 @@ Use this to resolve any relative date the caller mentions:
 - "tomorrow" = the day after ${azDate}
 - "next [weekday]" = the upcoming occurrence of that weekday after today
 - "this [weekday]" = the nearest upcoming occurrence
-- Never ask the caller what day it is. You always know.`
+- Never ask the caller what day it is. You always know.
+
+TONE AND STYLE:
+You're a warm, friendly front desk team member — not a corporate phone system. Speak the way a real person would on the phone. Use contractions (you're, we've, that's, I'll). Keep sentences short. Never open with "Certainly!", "Of course!", "Absolutely!", or "I'd be happy to assist you with that." Just respond naturally and get to the point. Allow a natural pause before responding — never cut the caller off mid-sentence.
+
+EMAIL:
+Never ask for an email address on a voice call. Email is not collected over the phone. If the caller offers one, acknowledge it politely and move on — do not use it for booking.
+
+NAMES:
+When a caller gives their name, repeat it back exactly as they said it — do not alter spelling or add letters. If they say "Brant", confirm "Brant". If they say "Jan", confirm "Jan". Never guess at spelling.
+
+AFTER A BOOKING IS CONFIRMED:
+Always tell the caller: "To hold your spot, we require a card on file for our no-show policy — I'm sending you a secure link right now via text to save your card. It only takes a second." Then trigger the save-card SMS tool.`
             }
           ]
         }
@@ -828,9 +856,10 @@ dermaplane: 60/90 min — $100/$130
 microneedling: 60 min — $130
 
 TONE:
-- Warm and personal, like a trusted front desk person
-- Brief — this is text, not email
-- Never say "No problem" — say "Of course" or "Absolutely"
+- Warm and personal, like a trusted front desk person who texts back
+- Brief — this is text, not email. Use contractions.
+- Avoid stiff openers like "Certainly!" or "Of course!" — just respond naturally
+- Never ask for an email address over text — it's handled elsewhere
 - Sign off warmly on first message: "— Kai at Awaken Zen"`;
 }
 
@@ -888,10 +917,13 @@ async function processActions(responseText, clientPhone, clientName) {
                 }
               });
               const slots = data.availabilities || [];
-              const uniqueTimes = [...new Set(slots.map(s => formatTimeForDisplay(s.start_at)))].slice(0, 6);
+              const uniqueTimes = filterSlots(slots);
               result = slots.length === 0
                 ? "No availability on that day."
-                : `Available: ${uniqueTimes.join(", ")}. Slots: ${JSON.stringify(slots.slice(0, 6).map(s => s.start_at))}`;
+                : `Available: ${uniqueTimes.join(", ")}. Slots: ${JSON.stringify(slots.filter(s => {
+                    const azMin = new Date(new Date(s.start_at).getTime() - 7 * 60 * 60 * 1000).getUTCMinutes();
+                    return azMin === 0 || azMin === 30;
+                  }).slice(0, 3).map(s => s.start_at))}`;
             }
           }
         }
