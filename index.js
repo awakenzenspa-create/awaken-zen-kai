@@ -896,11 +896,15 @@ ACTION COMMANDS (use these in your response when needed):
 [SEND_BOOKING_LINK] — send the booking link via text
 
 COMBO BOOKINGS:
-When a client wants both a massage and a facial, use the combo form. Brant always does the massage, Trevor always does the facial. The facial is always 60 min. Last available start times for combos:
-- 60 min massage + 60 min facial: 6:00 PM
-- 90 min massage + 60 min facial: 5:30 PM
-- 120 min massage + 60 min facial: 5:00 PM
-Do not offer combo start times later than these cutoffs.
+When a client wants both a massage and a facial, you MUST collect both before checking availability:
+1. Ask which massage type and duration (if not given)
+2. Ask which facial (if not given) — options: Calm & Clear, Derm-Renew, Hydro Refresh, Youthful Glow, Thermal Vitality
+3. Only then run [CHECK_AVAILABILITY: massageKey|duration|date|facialKey]
+4. Book with [BOOK_APPOINTMENT: massageKey|duration|isoDateTime|name|phone|facialKey]
+Brant does the massage, Trevor does the facial. Facial is always 60 min. Last start times:
+- 60 min massage: 6:00 PM latest
+- 90 min massage: 5:30 PM latest
+- 120 min massage: 5:00 PM latest
 
 SERVICES (common ones):
 swedish/european royalty: 60/90/120 min — $85/$115/$145
@@ -1077,12 +1081,15 @@ async function processActions(responseText, clientPhone, clientName) {
 
             const booking = bookingRes.booking;
             if (!booking) {
-              result = `Error: ${bookingRes.errors?.[0]?.detail || "Could not book"}`;
+              const errDetail = bookingRes.errors?.[0]?.detail || "Could not book";
+              console.error(`[SMS BOOK_APPOINTMENT] Square error — svc:${svcKey} dur:${dur} start:${isoDateTime} facial:${facialKeyArg || "none"} — ${errDetail}`, JSON.stringify(bookingRes.errors));
+              result = `Error: ${errDetail}`;
             } else {
               const displayTime = formatTimeForDisplay(booking.start_at);
               const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
                 timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric"
               });
+              console.log(`[SMS BOOK_APPOINTMENT] Success — ${serviceLabel} on ${displayDate} at ${displayTime} for ${name} (${booking.id})`);
               result = `Booked! ${serviceLabel} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
             }
           }
