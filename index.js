@@ -1177,9 +1177,9 @@ app.post("/incoming-sms", async (req, res) => {
         aiResponse.includes("[Action failed:")) {
 
       addToConversation(clientPhone, "assistant", aiResponse);
-      addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client without showing the raw action output.");
+      addToConversation(clientPhone, "user", "Based on the above action results, please respond naturally to the client. Do NOT use any action commands like [CHECK_AVAILABILITY] or [BOOK_APPOINTMENT] in this response — just reply in plain conversational text.");
 
-      let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, give the client a natural, warm response.", clientName);
+      let finalResponse = await getKaiSmsResponse(clientPhone, "Based on the action results above, reply in plain conversational text only. No action commands.", clientName);
       finalResponse = finalResponse.replace(/\[[A-Z_]+(?::[^\]]+)?\]/g, "").trim();
       console.log(`[SMS] Final response for ${clientPhone}: ${finalResponse.slice(0, 200)}`);
 
