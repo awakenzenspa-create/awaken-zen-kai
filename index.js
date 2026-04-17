@@ -207,6 +207,17 @@ function formatDateForSquare(date) {
   return date.toISOString().split("T")[0]; // YYYY-MM-DD
 }
 
+// Ensure ISO datetime has AZ timezone offset — Square rejects naive datetimes
+function ensureAzTimezone(iso) {
+  if (!iso) return iso;
+  const s = String(iso).trim();
+  // Already has offset or Z
+  if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) return s;
+  // Has date and time but no offset — append AZ offset
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return `${s}-07:00`;
+  return s;
+}
+
 function formatTimeForDisplay(isoString) {
   const d = new Date(isoString);
   return d.toLocaleTimeString("en-US", {
@@ -509,7 +520,7 @@ app.post("/book-appointment", async (req, res) => {
     const bookingRes = await squareRequest("POST", "/bookings", {
       booking: {
         location_id: LOCATION_ID,
-        start_at: startAt,
+        start_at: ensureAzTimezone(startAt),
         customer_id: customerId,
         customer_note: `Booked via Kai AI phone concierge. Card on file required per cancellation policy.`,
         appointment_segments: appointmentSegments
@@ -867,6 +878,18 @@ WHAT YOU CAN DO OVER TEXT:
 4. Send booking link for new appointments
 5. Look up their upcoming appointments
 
+BOOKING FLOW:
+When someone wants to book a new appointment, follow these steps in order — never skip:
+1. Confirm service type (if not given)
+2. Confirm duration (60, 90, or 120 min — if not given)
+3. Ask for their preferred date and time (if not given)
+4. Check availability: [CHECK_AVAILABILITY: serviceKey|duration|date]
+5. Present up to 3 time options and ask which works
+6. Ask for their full name (if not already given)
+7. Ask for their cell phone number (if not already given — you need it to send the save-card link)
+8. Then book: [BOOK_APPOINTMENT: serviceKey|duration|isoDateTime|name|phone]
+Do not skip steps 6 and 7. Never book without both name and phone number.
+
 RESCHEDULING FLOW:
 When someone wants to reschedule:
 1. First acknowledge warmly
@@ -892,6 +915,7 @@ ACTION COMMANDS (use these in your response when needed):
 [CHECK_AVAILABILITY: massageKey|duration|date|facialKey] — combo (massage + facial back-to-back)
 [BOOK_APPOINTMENT: massageKey|duration|isoDateTime|customerName|customerPhone] — single service
 [BOOK_APPOINTMENT: massageKey|duration|isoDateTime|customerName|customerPhone|facialKey] — combo
+isoDateTime MUST include the Arizona timezone offset, e.g. 2026-04-17T08:00:00-07:00
 [CANCEL_BOOKING: bookingId|version] — cancel a booking
 [SEND_BOOKING_LINK] — send the booking link via text
 
@@ -1071,7 +1095,7 @@ async function processActions(responseText, clientPhone, clientName) {
             const bookingRes = await squareRequest("POST", "/bookings", {
               booking: {
                 location_id: LOCATION_ID,
-                start_at: isoDateTime,
+                start_at: ensureAzTimezone(isoDateTime),
                 customer_id: customerId,
                 customer_note: "Booked via Kai SMS concierge.",
                 appointment_segments: appointmentSegments
