@@ -1256,6 +1256,59 @@ app.post("/incoming-sms", async (req, res) => {
   res.type("text/xml").send(twiml.toString());
 });
 
+// ── Route: Test social post — fires a real IG + FB post with provided caption ─
+app.post("/test-social-post", async (req, res) => {
+  const { caption, imageUrl } = req.body;
+  if (!caption) return res.status(400).json({ error: "caption is required" });
+
+  const GRAPH     = "https://graph.facebook.com/v19.0";
+  const IG_ID     = process.env.META_IG_ACCOUNT_ID;
+  const FB_ID     = process.env.META_FB_PAGE_ID;
+  const TOKEN     = process.env.META_PAGE_ACCESS_TOKEN;
+  // Use provided imageUrl or fall back to the AZS logo served from the site
+  const imgUrl    = imageUrl || `${SITE_URL}/images/azs-logo-social.jpg`;
+
+  const results = {};
+
+  // ── IG Feed ────────────────────────────────────────────────────────────────
+  try {
+    const containerRes = await fetch(`${GRAPH}/${IG_ID}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_url: imgUrl, caption, access_token: TOKEN })
+    });
+    const container = await containerRes.json();
+    if (!container.id) throw new Error(JSON.stringify(container));
+
+    const publishRes = await fetch(`${GRAPH}/${IG_ID}/media_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ creation_id: container.id, access_token: TOKEN })
+    });
+    const published = await publishRes.json();
+    results.instagram = published.id ? `posted: ${published.id}` : JSON.stringify(published);
+  } catch (e) {
+    results.instagram = `error: ${e.message}`;
+  }
+
+  // ── Facebook Feed ──────────────────────────────────────────────────────────
+  try {
+    const fbRes = await fetch(`${GRAPH}/${FB_ID}/photos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: imgUrl, caption, access_token: TOKEN })
+    });
+    const fbData = await fbRes.json();
+    const fbId = fbData.post_id || fbData.id;
+    results.facebook = fbId ? `posted: ${fbId}` : JSON.stringify(fbData);
+  } catch (e) {
+    results.facebook = `error: ${e.message}`;
+  }
+
+  console.log("[test-social-post]", results);
+  res.json({ results, imageUrl: imgUrl });
+});
+
 // ── Route: Social Flash — manual post trigger ────────────────────────────────
 app.post("/social-flash/post", async (req, res) => {
   const { service, serviceName, slotTime, flashPrice, addon } = req.body;
