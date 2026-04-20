@@ -25,6 +25,7 @@ const express = require('express');
 const { google } = require('googleapis');
 const Anthropic = require('@anthropic-ai/sdk');
 const twilio = require('twilio');
+const { logActivity } = require('./jobs/activityLogger');
 
 const router = express.Router();
 
@@ -315,6 +316,12 @@ async function processEmail(gmail, messageId) {
   if (classification === 'spam' || classification === 'unsubscribe') {
     await markAsRead(gmail, messageId);
     console.log(`[email] Skipped (${classification}): ${subject}`);
+    logActivity({
+      eventType: 'email',
+      channel:   'email',
+      outcome:   'spam',
+      details:   { subject, from: senderEmail, classification },
+    });
     return;
   }
 
@@ -337,11 +344,25 @@ async function processEmail(gmail, messageId) {
     const draftId = await createDraft(gmail, senderEmail, subject, reply, threadId);
     console.log(`[email] Draft created: ${draftId}`);
     await notifyOwner(senderName, senderEmail, subject, classification, true, draftId);
+    logActivity({
+      eventType:  'email',
+      channel:    'email',
+      outcome:    'draft_created',
+      clientName: senderName || null,
+      details:    { subject, from: senderEmail, classification, draftId },
+    });
   } else {
     // Auto-send
     await sendEmail(gmail, senderEmail, subject, reply, threadId);
     console.log(`[email] Sent reply to ${senderEmail}`);
     await notifyOwner(senderName, senderEmail, subject, classification, false);
+    logActivity({
+      eventType:  'email',
+      channel:    'email',
+      outcome:    'auto_sent',
+      clientName: senderName || null,
+      details:    { subject, from: senderEmail, classification },
+    });
   }
 
   // Mark original as read so we don't process it again

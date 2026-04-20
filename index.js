@@ -10,6 +10,7 @@ const https   = require("https");
 const http    = require("http");
 const Anthropic = require("@anthropic-ai/sdk");
 const { createClient } = require("@supabase/supabase-js");
+const { logActivity, isSameDayAz } = require("./jobs/activityLogger");
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase  = createClient(
@@ -54,7 +55,7 @@ const twilioClient  = twilio(
 const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
 const TWILIO_MSG_SVC  = process.env.TWILIO_MESSAGING_SERVICE_SID || "MG85a61647a288e50f86d21f447a498f8a";
 const VAPI_NUMBER     = process.env.VAPI_PHONE_NUMBER;
-const OWNER_CELL      = "+16232196907";
+const OWNER_CELLS     = ["+14064801884", "+14806486101"]; // Brant, Trevor
 const BOOKING_URL     = "https://awakenzenspa.com/booking";
 const GIFT_CARD_URL   = "https://awakenzenspa.com/gift-cards";
 const LOCATION_ID     = "TMRQ3D20EFD1X";
@@ -63,6 +64,14 @@ const SQUARE_BASE     = "https://connect.squareup.com/v2";
 const SQUARE_VERSION  = "2024-01-18";
 const SITE_URL        = process.env.SITE_URL   || "https://awakenzenspa.com";
 const CRON_SECRET     = process.env.CRON_SECRET || "";
+
+// ── Helper: notify all owners via SMS ────────────────────────────────────────
+async function notifyOwners(body) {
+  await Promise.all(OWNER_CELLS.map(cell =>
+    twilioClient.messages.create({ messagingServiceSid: TWILIO_MSG_SVC, to: cell, body })
+      .catch(e => console.error(`[notifyOwners] SMS to ${cell} failed:`, e.message))
+  ));
+}
 
 // ── Team Members ──────────────────────────────────────────────────────────────
 const TEAM_MEMBERS = {
@@ -255,26 +264,57 @@ function isLiveWindow() {
 // ── Route: Inbound call ───────────────────────────────────────────────────────
 app.post("/incoming", (req, res) => {
   const twiml = new VoiceResponse();
+  let callOutcome;
   if (isLiveWindow()) {
     const dial = twiml.dial({ timeout: 20, action: "/no-answer" });
-    dial.number({ url: `${process.env.BASE_URL}/whisper` }, OWNER_CELL);
+    dial.number({ url: `${process.env.BASE_URL}/whisper` }, OWNER_CELLS[0]); // Brant's cell
+    callOutcome = "routed_owner";
   } else {
     const dial = twiml.dial({ timeout: 30, action: "/no-answer" });
     dial.number(VAPI_NUMBER);
+    callOutcome = "routed_vapi";
   }
   res.type("text/xml");
   res.send(twiml.toString());
+
+  // Fire-and-forget activity log — never block the TwiML response
+  logActivity({
+    eventType:   "call",
+    channel:     "phone",
+    outcome:     callOutcome,
+    clientPhone: req.body.From || null,
+    details: {
+      callSid:    req.body.CallSid || null,
+      callerCity: req.body.CallerCity || null,
+      callerState: req.body.CallerState || null,
+    },
+  });
 });
 
 // ── Route: No answer fallback ─────────────────────────────────────────────────
 app.post("/no-answer", (req, res) => {
   const twiml = new VoiceResponse();
-  if (req.body.DialCallStatus !== "completed" && req.body.DialCallStatus !== "answered") {
+  const unanswered = req.body.DialCallStatus !== "completed" && req.body.DialCallStatus !== "answered";
+  if (unanswered) {
     const dial = twiml.dial();
     dial.number(VAPI_NUMBER);
   }
   res.type("text/xml");
   res.send(twiml.toString());
+
+  // Log when owner didn't pick up — call fell to voicemail/Vapi fallback
+  if (unanswered) {
+    logActivity({
+      eventType:   "call",
+      channel:     "phone",
+      outcome:     "voicemail",
+      clientPhone: req.body.From || null,
+      details: {
+        dialCallStatus: req.body.DialCallStatus || null,
+        callSid:        req.body.CallSid || null,
+      },
+    });
+  }
 });
 
 // ── Route: Whisper ────────────────────────────────────────────────────────────
@@ -585,19 +625,45 @@ app.post("/book-appointment", async (req, res) => {
       }
     }
 
-    // Notify owner
+    // ── Same-day detection ────────────────────────────────────────────────────
+    const bookingIsToday = isSameDayAz(booking.start_at);
+
+    // Notify owner — with extra urgency flag for same-day bookings
     try {
-      await twilioClient.messages.create({
-        messagingServiceSid: TWILIO_MSG_SVC,
-        to: OWNER_CELL,
-        body: `📋 AZS: Kai booked ${serviceLabel} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`
-      });
+      const ownerMsg = bookingIsToday
+        ? `⚠️ SAME-DAY BOOKING — AZS: Kai booked ${serviceLabel} for ${customerName} TODAY at ${displayTime}. Booking ID: ${booking.id}. PLEASE VERIFY in Square — same-day bookings need manual confirmation. Awaiting card on file.`
+        : `📋 AZS: Kai booked ${serviceLabel} for ${customerName} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}. Awaiting card on file.`;
+      await notifyOwners(ownerMsg);
     } catch (e) { /* non-fatal */ }
+
+    // Log to activity log
+    logActivity({
+      eventType:   "booking",
+      channel:     "phone",
+      outcome:     bookingIsToday ? "same_day_booked" : "booked",
+      clientPhone: customerPhone,
+      clientName:  customerName,
+      serviceName: `${serviceLabel} (${dur} min)`,
+      bookingId:   booking.id,
+      sameDay:     bookingIsToday,
+      startsAt:    booking.start_at,
+      details: {
+        source:    "vapi_call",
+        displayDate,
+        displayTime,
+      },
+    });
 
     vapiResponse(res, toolCallId, `We've got you reserved! ${firstName}, your ${serviceLabel} is held for ${displayDate} at ${displayTime}. I just sent you a text with a link to save a card on file — that's the last step to lock it in. Once that's done you'll get a confirmation. We look forward to seeing you at Awaken Zen Spa!`);
 
   } catch (err) {
     console.error("book-appointment error:", err);
+    logActivity({
+      eventType: "booking",
+      channel:   "phone",
+      outcome:   "error",
+      details:   { error: err.message, source: "vapi_call" },
+    });
     vapiResponse(res, toolCallId, "I had trouble reserving that appointment. Let me send you our booking link instead.");
   }
 });
@@ -669,11 +735,7 @@ app.post("/confirm-booking", async (req, res) => {
 
     // Notify owner
     try {
-      await twilioClient.messages.create({
-        messagingServiceSid: TWILIO_MSG_SVC,
-        to: OWNER_CELL,
-        body: `✅ AZS: Booking complete — ${customerName} · ${serviceName} · ${displayDate} at ${displayTime} · Card on file saved. Source: ${bookedSource || "unknown"}`
-      });
+      await notifyOwners(`✅ AZS: Booking complete — ${customerName} · ${serviceName} · ${displayDate} at ${displayTime} · Card on file saved. Source: ${bookedSource || "unknown"}`);
     } catch (e) { /* non-fatal */ }
 
     res.json({ ok: true });
@@ -1061,13 +1123,24 @@ async function processActions(responseText, clientPhone, clientName) {
         const cancelRes = await cancelBooking(bookingId, parseInt(version) || 0);
         if (cancelRes.errors) {
           result = `Error: ${cancelRes.errors[0]?.detail || "Could not cancel"}`;
+          logActivity({
+            eventType:   "sms",
+            channel:     "sms",
+            outcome:     "error",
+            clientPhone: clientPhone,
+            details:     { action: "cancel", error: result, bookingId },
+          });
         } else {
           result = "Booking cancelled successfully.";
           // Notify owner
-          await twilioClient.messages.create({
-            messagingServiceSid: TWILIO_MSG_SVC,
-            to: OWNER_CELL,
-            body: `📋 AZS: Kai cancelled booking ${bookingId} for ${clientPhone} via SMS.`
+          await notifyOwners(`📋 AZS: Kai cancelled booking ${bookingId} for ${clientPhone} via SMS.`);
+          logActivity({
+            eventType:   "sms",
+            channel:     "sms",
+            outcome:     "cancelled",
+            clientPhone: clientPhone,
+            bookingId:   bookingId,
+            details:     { action: "cancel" },
           });
         }
         finalText = finalText.replace(action.full, `[Cancel result: ${result}]`);
@@ -1129,6 +1202,15 @@ async function processActions(responseText, clientPhone, clientName) {
               const errDetail = bookingRes.errors?.[0]?.detail || "Could not book";
               console.error(`[SMS BOOK_APPOINTMENT] Square error — svc:${svcKey} dur:${dur} start:${isoDateTime} facial:${facialKeyArg || "none"} — ${errDetail}`, JSON.stringify(bookingRes.errors));
               result = `Error: ${errDetail}`;
+              logActivity({
+                eventType:   "booking",
+                channel:     "sms",
+                outcome:     "error",
+                clientPhone: phone || clientPhone,
+                clientName:  name || null,
+                serviceName: serviceLabel,
+                details:     { error: errDetail, source: "sms" },
+              });
             } else {
               const displayTime = formatTimeForDisplay(booking.start_at);
               const displayDate = new Date(booking.start_at).toLocaleDateString("en-US", {
@@ -1136,6 +1218,27 @@ async function processActions(responseText, clientPhone, clientName) {
               });
               console.log(`[SMS BOOK_APPOINTMENT] Success — ${serviceLabel} on ${displayDate} at ${displayTime} for ${name} (${booking.id})`);
               result = `Booked! ${serviceLabel} on ${displayDate} at ${displayTime}. Booking ID: ${booking.id}`;
+
+              const bookingIsToday = isSameDayAz(booking.start_at);
+
+              // Extra owner alert for same-day SMS bookings
+              if (bookingIsToday) {
+                notifyOwners(`⚠️ SAME-DAY BOOKING via SMS — AZS: Kai booked ${serviceLabel} for ${name || clientPhone} TODAY at ${displayTime}. Booking ID: ${booking.id}. PLEASE VERIFY in Square.`)
+                  .catch(e => console.error("[SMS BOOK_APPOINTMENT] Same-day owner SMS failed:", e.message));
+              }
+
+              logActivity({
+                eventType:   "booking",
+                channel:     "sms",
+                outcome:     bookingIsToday ? "same_day_booked" : "booked",
+                clientPhone: phone || clientPhone,
+                clientName:  name || null,
+                serviceName: `${serviceLabel} (${dur} min)`,
+                bookingId:   booking.id,
+                sameDay:     bookingIsToday,
+                startsAt:    booking.start_at,
+                details:     { source: "sms", displayDate, displayTime },
+              });
             }
           }
         }
@@ -1192,11 +1295,15 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
 // ── Route: Incoming SMS ───────────────────────────────────────────────────────
 app.post("/incoming-sms", async (req, res) => {
   const twiml = new twilio.twiml.MessagingResponse();
+  // Track the SMS outcome for the activity log (set during processing)
+  let smsOutcome  = "info_provided";
+  let smsClientPhone = null;
 
   try {
     const incomingMsg = req.body.Body?.trim();
     const clientPhone = req.body.From;
     const clientName  = req.body.FromCity || "";
+    smsClientPhone = clientPhone;
 
     if (!incomingMsg || !clientPhone) {
       twiml.message("Hi! You've reached Awaken Zen Spa. How can Kai help you today?");
@@ -1215,6 +1322,15 @@ app.post("/incoming-sms", async (req, res) => {
     // Process any action commands in the response
     aiResponse = await processActions(aiResponse, clientPhone, clientName);
     console.log(`[SMS] After actions for ${clientPhone}: ${aiResponse.slice(0, 300)}`);
+
+    // Detect outcome for activity log based on action results embedded in response
+    if (aiResponse.includes("[Booking result: Booked!")) {
+      smsOutcome = "booked"; // booking events are also logged individually in processActions
+    } else if (aiResponse.includes("[Cancel result: Booking cancelled")) {
+      smsOutcome = "cancelled";
+    } else if (aiResponse.includes("[Action failed:")) {
+      smsOutcome = "error";
+    }
 
     // Strip action tags from whatever gets stored in history — never store raw results
     const cleanForHistory = t => t.replace(/\[(?:Bookings found|Availability|Cancel result|Booking result|Action failed):[^\]]*\]/g, "").trim();
@@ -1252,10 +1368,20 @@ app.post("/incoming-sms", async (req, res) => {
 
   } catch (err) {
     console.error("SMS error:", err);
+    smsOutcome = "error";
     twiml.message("Hi! This is Awaken Zen Spa. We're having a moment — please call us at (602) 688-2578 or visit awakenzenspa.com/booking. Sorry for the inconvenience!");
   }
 
   res.type("text/xml").send(twiml.toString());
+
+  // Log overall SMS interaction (booking/cancellation outcomes already logged in processActions)
+  logActivity({
+    eventType:   "sms",
+    channel:     "sms",
+    outcome:     smsOutcome,
+    clientPhone: smsClientPhone,
+    details:     { messageSid: req.body.MessageSid || null },
+  });
 });
 
 // ── Route: Facebook OAuth — one-time page token generator ────────────────────
@@ -1726,6 +1852,24 @@ app.post('/generate-content', async (req, res) => {
 
   } catch (err) {
     console.error('[generate-content] Fatal error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Route: Manual daily digest trigger ───────────────────────────────────────
+// POST /digest/send  (x-cron-token required)
+// Lets you fire the digest email on demand without waiting for the cron.
+app.post("/digest/send", async (req, res) => {
+  const token = req.headers["x-cron-token"] || req.query.token;
+  if (CRON_SECRET && token !== CRON_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const { runDailyDigest } = require("./jobs/dailyDigest");
+    const result = await runDailyDigest();
+    res.json({ success: true, resendId: result.resendId, activityCount: result.activityCount });
+  } catch (err) {
+    console.error("[digest/send] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
