@@ -3,9 +3,18 @@
 // POST /gbp/upload-photo — upload photo from staff portal
 // GET  /gbp/status      — verify OAuth + fetch location info
 
+const express = require('express');
 const { createPost, uploadPhoto, getLocationName, getAccessToken } = require('./gbp-client');
 const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+
+const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Allowed origins for CORS
 const GBP_ALLOWED_ORIGINS = [
@@ -28,7 +37,7 @@ function corsGbp(req, res, next) {
 }
 
 // Handle preflight for all /gbp routes
-app.options('/gbp/*', corsGbp, (req, res) => res.sendStatus(204));
+router.options('/gbp/*', corsGbp, (req, res) => res.sendStatus(204));
 
 // Auth middleware — reuse CRON_SECRET for internal calls, or a staff session
 function requireCronOrStaff(req, res, next) {
@@ -41,7 +50,7 @@ function requireCronOrStaff(req, res, next) {
 }
 
 // ── GET /gbp/status ───────────────────────────────────────────────────────────
-app.get('/gbp/status', corsGbp, requireCronOrStaff, async (req, res) => {
+router.get('/gbp/status', corsGbp, requireCronOrStaff, async (req, res) => {
   try {
     const locationName = await getLocationName();
     res.json({ connected: true, locationName });
@@ -52,7 +61,7 @@ app.get('/gbp/status', corsGbp, requireCronOrStaff, async (req, res) => {
 
 // ── POST /gbp/post ────────────────────────────────────────────────────────────
 // Body: { summary, type, callToActionType, offerDetails, eventDetails }
-app.post('/gbp/post', corsGbp, requireCronOrStaff, async (req, res) => {
+router.post('/gbp/post', corsGbp, requireCronOrStaff, async (req, res) => {
   try {
     const { summary, callToActionType, offerDetails, eventDetails } = req.body;
     if (!summary) return res.status(400).json({ error: 'summary is required' });
@@ -83,7 +92,7 @@ app.post('/gbp/post', corsGbp, requireCronOrStaff, async (req, res) => {
 
 // ── POST /gbp/upload-photo ────────────────────────────────────────────────────
 // Multipart form: photo (file) + category (string)
-app.post('/gbp/upload-photo', corsGbp, requireCronOrStaff, upload.single('photo'), async (req, res) => {
+router.post('/gbp/upload-photo', corsGbp, requireCronOrStaff, upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
 
@@ -109,3 +118,5 @@ app.post('/gbp/upload-photo', corsGbp, requireCronOrStaff, upload.single('photo'
     res.status(500).json({ error: err.message });
   }
 });
+
+module.exports = router;
