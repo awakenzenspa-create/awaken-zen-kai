@@ -40,7 +40,10 @@ async function getLocationName() {
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const accountsData = await accountsRes.json();
-  if (!accountsData.accounts?.length) throw new Error('No GBP accounts found');
+  if (!accountsData.accounts?.length) {
+    console.error('[gbp] Accounts API response:', JSON.stringify(accountsData));
+    throw new Error('No GBP accounts found');
+  }
 
   // Find the account that owns AZS location
   const account = accountsData.accounts.find(a =>
