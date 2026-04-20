@@ -1601,6 +1601,9 @@ app.post("/flash-fill/trigger", async (req, res) => {
 const emailRoutes = require('./email-handler');
 app.use(emailRoutes);
 
+// ── GBP (Google Business Profile) routes ─────────────────────────────────────
+app.use(require('./gbp-routes'));   // registers /gbp/status, /gbp/post, /gbp/upload-photo
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AZS Content Engine — Weekly Social Post Generator
 // POST /generate-content  (called by Railway cron, requires x-cron-token header)
@@ -1838,6 +1841,10 @@ app.post('/generate-content', async (req, res) => {
         errors.push({ slot: `${slot.day}-${slot.platform}`, error: slotErr.message });
       }
     }
+
+    const { generateAndPublishGBPPosts } = require('./gbp-content-generator');
+    const gbpResult = await generateAndPublishGBPPosts(monthlySpecial, trendingContext);
+    console.log('[generate-content] GBP:', gbpResult.results.length, 'published');
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     console.log(`[generate-content] Done — ${results.length} posts generated in ${elapsed}s`);
