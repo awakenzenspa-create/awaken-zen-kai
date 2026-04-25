@@ -148,11 +148,15 @@ function stripEmailThread(body) {
 }
 
 // ── CLASSIFY EMAIL ───────────────────────────────────────────
-function classifyEmail(subject, body) {
+function classifyEmail(subject, body, senderEmail) {
   const text = (subject + ' ' + body).toLowerCase();
+  const sender = (senderEmail || '').toLowerCase();
+
+  // Skip automated/system senders
+  if (/no.?reply|noreply|donotreply|notifications?@|alerts?@|support@twilio|@squarespace|@google|@stripe|@square|googlevoice|googlebusiness/i.test(sender)) return 'spam';
 
   if (/(unsubscribe|no longer wish|opt.?out|remove me)/i.test(text)) return 'unsubscribe';
-  if (/(hi there|dear business owner|seo|marketing|improve your ranking|we found your business|special offer for|blast|promo)/i.test(subject)) return 'spam';
+  if (/(hi there|dear business owner|seo|marketing|improve your ranking|we found your business|special offer for|blast|promo|application|investment opportunity|bank will spend|storefront space|a different timeline)/i.test(subject)) return 'spam';
   if (/(book|appointment|schedule|available|availability|reserve|session|massage|facial|service)/i.test(text)) return 'booking';
   if (/(cancel|reschedule|change my appointment|move my)/i.test(text)) return 'reschedule';
   if (/(price|cost|how much|rate|package|gift card)/i.test(text)) return 'pricing';
@@ -321,7 +325,7 @@ async function processEmail(gmail, messageId) {
   const senderName  = extractFirstName(from);
   const senderEmail = from.match(/<(.+)>/)?.[1] || from;
 
-  const classification = classifyEmail(subject, body);
+  const classification = classifyEmail(subject, body, senderEmail);
 
   // Skip spam/unsubscribes silently (just mark as read)
   if (classification === 'spam' || classification === 'unsubscribe') {
@@ -380,56 +384,46 @@ async function processEmail(gmail, messageId) {
   await markAsRead(gmail, messageId);
 }
 
-// ── ROUTE: POLL INBOX (called by Railway cron every 2 min) ──
+// ── ROUTE: POLL INBOX (called by cron every 2 min) ──────────
 router.post('/email/poll', async (req, res) => {
-  // Lightweight auth — only Railway cron should call this
   const token = req.headers['x-cron-token'] || req.query.token;
   if (token !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  try {
-    const gmail = getGmailClient();
+  // Respond immediately so cron-job.org doesn't time out
+  res.json({ status: 'processing', message: 'Email poll started in background' });
 
-    // Get list of unread messages in INBOX — fetch up to 50 per poll
-    const listRes = await gmail.users.messages.list({
-      userId: 'me',
-      labelIds: ['INBOX', 'UNREAD'],
-      maxResults: 50,
-    });
+  // Process asynchronously after response is sent
+  setImmediate(async () => {
+    try {
+      const gmail = getGmailClient();
 
-    const messages = listRes.data.messages || [];
+      const listRes = await gmail.users.messages.list({
+        userId: 'me',
+        labelIds: ['INBOX', 'UNREAD'],
+        maxResults: 25,
+      });
 
-    if (messages.length === 0) {
-      return res.json({ processed: 0, message: 'No new emails' });
-    }
+      const messages = listRes.data.messages || [];
+      const unprocessed = messages.filter(m => !processedMessageIds.has(m.id));
 
-    // Filter out already-processed messages from this session
-    const unprocessed = messages.filter(m => !processedMessageIds.has(m.id));
+      console.log(`[email/poll] Found ${messages.length} unread, ${unprocessed.length} to process`);
 
-    console.log(`[email/poll] Found ${messages.length} unread (${unprocessed.length} new this session)`);
-
-    let processed = 0;
-    const errors = [];
-
-    for (const msg of unprocessed) {
-      try {
-        await processEmail(gmail, msg.id);
-        processed++;
-        // Small delay between emails to avoid rate limits
-        await new Promise(r => setTimeout(r, 500));
-      } catch (err) {
-        console.error(`[email/poll] Error processing ${msg.id}:`, err.message);
-        errors.push({ id: msg.id, error: err.message });
+      for (const msg of unprocessed) {
+        try {
+          await processEmail(gmail, msg.id);
+          await new Promise(r => setTimeout(r, 500));
+        } catch (err) {
+          console.error(`[email/poll] Error processing ${msg.id}:`, err.message);
+        }
       }
+
+      console.log(`[email/poll] Done — processed ${unprocessed.length} emails`);
+    } catch (err) {
+      console.error('[email/poll] Fatal error:', err.message);
     }
-
-    res.json({ processed, errors: errors.length > 0 ? errors : undefined });
-
-  } catch (err) {
-    console.error('[email/poll] Fatal error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 // ── ROUTE: MANUAL SEND DRAFT (staff portal trigger) ─────────
