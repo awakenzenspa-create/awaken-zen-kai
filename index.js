@@ -2106,9 +2106,12 @@ app.post("/leave-voicemail", async (req, res) => {
     const callSid = req.body?.message?.call?.phoneCallProviderId;
     const BASE    = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
     if (callSid) {
-      // Redirect the live Twilio call to our voicemail TwiML endpoint
-      await twilioClient.calls(callSid).update({ url: `${BASE}/voicemail`, method: "POST" });
-      console.log(`[leave-voicemail] Redirected call ${callSid} to voicemail`);
+      // callSid is the B-leg (Twilio → Vapi). We need the A-leg (caller) so that
+      // redirecting it goes straight to voicemail instead of re-triggering /no-answer.
+      const call = await twilioClient.calls(callSid).fetch();
+      const targetSid = call.parentCallSid || callSid;
+      await twilioClient.calls(targetSid).update({ url: `${BASE}/voicemail`, method: "POST" });
+      console.log(`[leave-voicemail] Redirected call ${targetSid} to voicemail`);
     }
     vapiResponse(res, toolCallId, "Connecting you to voicemail now. Please stay on the line.");
   } catch (e) {
