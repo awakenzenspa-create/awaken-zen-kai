@@ -1897,6 +1897,38 @@ app.post("/digest/send", async (req, res) => {
   }
 });
 
+// ── Route: Make outbound call ─────────────────────────────────────────────────
+// POST /call  { "to": "+16025551234", "from_owner": "brant" | "trevor" (optional) }
+// Rings the owner's cell first; when they pick up, dials the client and bridges.
+app.post("/call", async (req, res) => {
+  const to        = req.body.to;
+  const fromOwner = req.body.from_owner || "brant";
+  const ownerCell = fromOwner === "trevor" ? "+14806486101" : "+14064801884";
+
+  if (!to) return res.status(400).json({ error: "Missing 'to' phone number" });
+
+  // Twilio calls the owner first; when they answer, connects them to the client.
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial callerId="${TWILIO_NUMBER}">
+    <Number>${to}</Number>
+  </Dial>
+</Response>`;
+
+  try {
+    const call = await twilioClient.calls.create({
+      to: ownerCell,
+      from: TWILIO_NUMBER,
+      twiml,
+    });
+    console.log(`[/call] Ringing ${ownerCell} → bridges to client ${to} (sid: ${call.sid})`);
+    res.json({ success: true, callSid: call.sid, to, owner: ownerCell });
+  } catch (e) {
+    console.error("[/call] Error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
 
