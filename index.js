@@ -31,6 +31,53 @@ app.use("/call", (req, res, next) => {
   next();
 });
 
+// ── CORS for manual-sms + voicemail (staff portal cross-origin requests) ─────
+["manual-sms", "voicemail"].forEach(prefix => {
+  app.use(`/${prefix}`, (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(200);
+    next();
+  });
+});
+
+// ── Route: Manual SMS — toggle manual mode for a phone number ─────────────────
+app.post("/manual-sms/toggle", async (req, res) => {
+  const { phone, active } = req.body;
+  if (!phone) return res.status(400).json({ error: "Missing phone" });
+  const { error } = await supabase
+    .from("manual_sms_sessions")
+    .upsert({ phone, active: !!active, updated_at: new Date().toISOString() }, { onConflict: "phone" });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, phone, active: !!active });
+});
+
+// ── Route: Manual SMS — get thread for a phone number ────────────────────────
+app.get("/manual-sms/thread", async (req, res) => {
+  const phone = req.query.phone;
+  if (!phone) return res.status(400).json({ error: "Missing phone" });
+  const [{ data: session }, { data: messages }] = await Promise.all([
+    supabase.from("manual_sms_sessions").select("active").eq("phone", phone).maybeSingle(),
+    supabase.from("manual_sms_messages").select("*").eq("phone", phone).order("created_at", { ascending: true }),
+  ]);
+  res.json({ active: session?.active ?? false, messages: messages || [] });
+});
+
+// ── Route: Manual SMS — send outbound message ─────────────────────────────────
+app.post("/manual-sms/send", async (req, res) => {
+  const { phone, body } = req.body;
+  if (!phone || !body) return res.status(400).json({ error: "Missing phone or body" });
+  try {
+    await twilioClient.messages.create({ messagingServiceSid: TWILIO_MSG_SVC, to: phone, body });
+    await supabase.from("manual_sms_messages").insert({ phone, direction: "outbound", body });
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[manual-sms/send]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CORS for flash-fill routes (staff portal cross-origin requests) ─────────
 app.use("/flash-fill", (req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
@@ -1320,7 +1367,6 @@ async function getKaiSmsResponse(clientPhone, userMessage, clientName) {
 // ── Route: Incoming SMS ───────────────────────────────────────────────────────
 app.post("/incoming-sms", async (req, res) => {
   const twiml = new twilio.twiml.MessagingResponse();
-  // Track the SMS outcome for the activity log (set during processing)
   let smsOutcome  = "info_provided";
   let smsClientPhone = null;
 
@@ -1333,6 +1379,18 @@ app.post("/incoming-sms", async (req, res) => {
     if (!incomingMsg || !clientPhone) {
       twiml.message("Hi! You've reached Awaken Zen Spa. How can Kai help you today?");
       return res.type("text/xml").send(twiml.toString());
+    }
+
+    // Check manual mode — if active, store message and let staff reply manually
+    const { data: manualSession } = await supabase
+      .from("manual_sms_sessions")
+      .select("active")
+      .eq("phone", clientPhone)
+      .maybeSingle();
+    if (manualSession?.active) {
+      await supabase.from("manual_sms_messages").insert({ phone: clientPhone, direction: "inbound", body: incomingMsg });
+      console.log(`[SMS] Manual mode active for ${clientPhone} — message queued for staff`);
+      return res.type("text/xml").send(twiml.toString()); // silent — no Kai response
     }
 
     console.log(`SMS from ${clientPhone}: ${incomingMsg}`);
@@ -1935,6 +1993,88 @@ app.post("/call", async (req, res) => {
   } catch (e) {
     console.error("[/call] Error:", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Route: Voicemail — Twilio TwiML greeting + record ────────────────────────
+app.post("/voicemail", (req, res) => {
+  const twiml = new VoiceResponse();
+  twiml.say({ voice: "alice" },
+    "You've reached Awaken Zen Spa. We're sorry we missed you. " +
+    "Please leave your name, number, and a brief message after the tone and we'll get back to you shortly. Thank you!"
+  );
+  twiml.record({
+    action: `${process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app"}/voicemail/done`,
+    method: "POST",
+    maxLength: 120,
+    playBeep: true,
+    trim: "trim-silence",
+  });
+  twiml.say({ voice: "alice" }, "We did not receive a recording. Goodbye.");
+  res.type("text/xml").send(twiml.toString());
+});
+
+// ── Route: Voicemail — recording callback ─────────────────────────────────────
+app.post("/voicemail/done", async (req, res) => {
+  const { RecordingUrl, RecordingSid, RecordingDuration, From, CallSid } = req.body;
+  console.log(`[voicemail] New recording from ${From} — ${RecordingDuration}s — ${RecordingUrl}`);
+
+  // Twilio needs a moment before the MP3 is available
+  const mp3Url = `${RecordingUrl}.mp3`;
+
+  // Save to Supabase
+  const { error } = await supabase.from("voicemails").insert({
+    from_number:      From,
+    recording_url:    mp3Url,
+    recording_sid:    RecordingSid,
+    duration_seconds: parseInt(RecordingDuration) || 0,
+    call_sid:         CallSid,
+  });
+  if (error) console.error("[voicemail/done] Supabase error:", error.message);
+
+  // Notify owners via SMS
+  const notifyBody =
+    `📬 New voicemail from ${From} (${RecordingDuration}s) — check the staff portal to listen.`;
+  await notifyOwners(notifyBody);
+
+  res.type("text/xml").send("<Response></Response>");
+});
+
+// ── Route: Voicemail — list for staff portal ──────────────────────────────────
+app.get("/voicemail/list", async (req, res) => {
+  const { data, error } = await supabase
+    .from("voicemails")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ voicemails: data || [] });
+});
+
+// ── Route: Voicemail — mark listened ─────────────────────────────────────────
+app.post("/voicemail/listened", async (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: "Missing id" });
+  const { error } = await supabase.from("voicemails").update({ listened: true }).eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── Route: Vapi tool — leave_voicemail (redirects active call to recorder) ───
+app.post("/leave-voicemail", async (req, res) => {
+  const toolCallId = extractToolCallId(req.body);
+  try {
+    const callSid = req.body?.message?.call?.phoneCallProviderId;
+    const BASE    = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
+    if (callSid) {
+      // Redirect the live Twilio call to our voicemail TwiML endpoint
+      await twilioClient.calls(callSid).update({ url: `${BASE}/voicemail`, method: "POST" });
+      console.log(`[leave-voicemail] Redirected call ${callSid} to voicemail`);
+    }
+    vapiResponse(res, toolCallId, "Connecting you to voicemail now. Please stay on the line.");
+  } catch (e) {
+    console.error("[leave-voicemail]", e.message);
+    vapiResponse(res, toolCallId, "I wasn't able to transfer you. Please call back and let us know you'd like to leave a message.");
   }
 });
 
