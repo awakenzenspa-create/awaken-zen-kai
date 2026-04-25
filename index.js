@@ -876,7 +876,10 @@ When a caller wants both a massage and a facial, check availability and book as 
 - 120 min massage: 5:00 PM
 
 AFTER A BOOKING IS CONFIRMED:
-Always tell the caller: "To hold your spot, we require a card on file for our no-show policy — I'm sending you a secure link right now via text to save your card. It only takes a second." Then trigger the save-card SMS tool.`
+Always tell the caller: "To hold your spot, we require a card on file for our no-show policy — I'm sending you a secure link right now via text to save your card. It only takes a second." Then trigger the save-card SMS tool.
+
+VOICEMAIL OPT-OUT:
+If a caller explicitly asks to leave a voicemail, speak to a real person, or says they'd rather leave a message, say: "Of course — let me connect you to our voicemail and someone will call you back shortly." Then use the leave_voicemail tool immediately. Do not ask follow-up questions first. Do not offer to take a message yourself.`
             }
           ]
         }
@@ -1944,6 +1947,42 @@ app.post('/generate-content', async (req, res) => {
     console.error('[generate-content] Fatal error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Route: Activity log for staff portal ─────────────────────────────────────
+app.use("/activity", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+app.get("/activity/log", async (req, res) => {
+  // date param = YYYY-MM-DD in Arizona time. Defaults to today.
+  const AZ_OFFSET = 7 * 60 * 60 * 1000; // UTC-7, no DST
+  let startUTC, endUTC, label;
+  if (req.query.date) {
+    const [y, m, d] = req.query.date.split("-").map(Number);
+    startUTC = new Date(Date.UTC(y, m - 1, d) + AZ_OFFSET);
+    endUTC   = new Date(startUTC.getTime() + 24 * 60 * 60 * 1000);
+    label    = new Date(startUTC).toLocaleDateString("en-US", { timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  } else {
+    const now = new Date();
+    const azStr = now.toLocaleDateString("en-US", { timeZone: "America/Phoenix", year: "numeric", month: "2-digit", day: "2-digit" });
+    const [mo, dy, yr] = azStr.split("/");
+    startUTC = new Date(`${yr}-${mo}-${dy}T07:00:00.000Z`);
+    endUTC   = new Date(startUTC.getTime() + 24 * 60 * 60 * 1000);
+    label    = now.toLocaleDateString("en-US", { timeZone: "America/Phoenix", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  }
+  const { data, error } = await supabase
+    .from("kai_activity_log")
+    .select("*")
+    .gte("created_at", startUTC.toISOString())
+    .lt("created_at", endUTC.toISOString())
+    .order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ label, events: data || [] });
 });
 
 // ── Route: Manual daily digest trigger ───────────────────────────────────────
