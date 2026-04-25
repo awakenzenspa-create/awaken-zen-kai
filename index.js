@@ -22,6 +22,15 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
+// ── CORS for /call (staff portal cross-origin requests) ──────────────────────
+app.use("/call", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 // ── CORS for flash-fill routes (staff portal cross-origin requests) ─────────
 app.use("/flash-fill", (req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
