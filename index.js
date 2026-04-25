@@ -994,6 +994,7 @@ ACTION COMMANDS (use these in your response when needed):
 isoDateTime MUST include the Arizona timezone offset, e.g. 2026-04-17T08:00:00-07:00
 [CANCEL_BOOKING: bookingId|version] — cancel a booking
 [SEND_BOOKING_LINK] — send the booking link via text
+[CALLBACK_REQUEST: message] — use this when a client asks a staff member to call them back; the owner will be notified immediately with the client's number and their message
 
 COMBO BOOKINGS:
 When a client wants both a massage and a facial, you MUST collect both before checking availability:
@@ -1252,6 +1253,21 @@ async function processActions(responseText, clientPhone, clientName) {
           body: `Here's the Awaken Zen Spa booking link:\n${BOOKING_URL}`
         });
         finalText = finalText.replace(action.full, "[Booking link sent]");
+      }
+
+      else if (action.name === "CALLBACK_REQUEST") {
+        const [callbackMsg] = action.args;
+        const displayPhone = clientPhone.replace(/\+1/, '').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+        await notifyOwners(`📞 AZS callback request — ${clientName || displayPhone} (${clientPhone}) asked to be called back. Message: "${callbackMsg || 'No additional message'}"`);
+        finalText = finalText.replace(action.full, "[Callback request sent to staff]");
+        logActivity({
+          eventType:   'sms',
+          channel:     'sms',
+          outcome:     'callback_requested',
+          clientPhone,
+          clientName:  clientName || null,
+          details:     { message: callbackMsg },
+        });
       }
 
     } catch (err) {

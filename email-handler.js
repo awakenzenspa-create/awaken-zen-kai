@@ -271,13 +271,24 @@ async function notifyOwner(senderName, senderEmail, subject, classification, dra
 }
 
 // ── MARK AS READ ─────────────────────────────────────────────
+let kaiProcessedLabelId = null;
+
+async function getKaiProcessedLabelId(gmail) {
+  if (kaiProcessedLabelId) return kaiProcessedLabelId;
+  const res = await gmail.users.labels.list({ userId: 'me' });
+  const label = (res.data.labels || []).find(l => l.name === 'kai-processed');
+  kaiProcessedLabelId = label?.id || null;
+  return kaiProcessedLabelId;
+}
+
 async function markAsRead(gmail, messageId) {
+  const labelId = await getKaiProcessedLabelId(gmail);
   await gmail.users.messages.modify({
     userId: 'me',
     id: messageId,
     requestBody: {
       removeLabelIds: ['UNREAD'],
-      addLabelIds: ['Label_kai_processed'], // optional — create this label in Gmail first
+      ...(labelId ? { addLabelIds: [labelId] } : {}),
     },
   });
 }
@@ -380,11 +391,11 @@ router.post('/email/poll', async (req, res) => {
   try {
     const gmail = getGmailClient();
 
-    // Get list of unread messages in INBOX
+    // Get list of unread messages in INBOX — fetch up to 50 per poll
     const listRes = await gmail.users.messages.list({
       userId: 'me',
       labelIds: ['INBOX', 'UNREAD'],
-      maxResults: 10, // Process up to 10 at a time
+      maxResults: 50,
     });
 
     const messages = listRes.data.messages || [];
@@ -393,12 +404,15 @@ router.post('/email/poll', async (req, res) => {
       return res.json({ processed: 0, message: 'No new emails' });
     }
 
-    console.log(`[email/poll] Found ${messages.length} unread emails`);
+    // Filter out already-processed messages from this session
+    const unprocessed = messages.filter(m => !processedMessageIds.has(m.id));
+
+    console.log(`[email/poll] Found ${messages.length} unread (${unprocessed.length} new this session)`);
 
     let processed = 0;
     const errors = [];
 
-    for (const msg of messages) {
+    for (const msg of unprocessed) {
       try {
         await processEmail(gmail, msg.id);
         processed++;
