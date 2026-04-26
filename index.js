@@ -108,13 +108,11 @@ const twilioClient  = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-const TWILIO_NUMBER   = process.env.TWILIO_PHONE_NUMBER;
-const TWILIO_MSG_SVC  = process.env.TWILIO_MESSAGING_SERVICE_SID || "MG85a61647a288e50f86d21f447a498f8a";
-const VAPI_NUMBER     = process.env.VAPI_PHONE_NUMBER;
-
-// Maps caller phone → A-leg CallSid so /leave-voicemail can redirect the parent call
-const activeCallSids = new Map();
-const OWNER_CELLS     = ["+14064801884", "+14806486101"]; // Brant, Trevor
+const TWILIO_NUMBER    = process.env.TWILIO_PHONE_NUMBER;
+const TWILIO_MSG_SVC   = process.env.TWILIO_MESSAGING_SERVICE_SID || "MG85a61647a288e50f86d21f447a498f8a";
+const VAPI_NUMBER      = process.env.VAPI_PHONE_NUMBER;
+const VOICEMAIL_NUMBER = process.env.VOICEMAIL_PHONE_NUMBER || "+16026690855";
+const OWNER_CELLS      = ["+14064801884", "+14806486101"]; // Brant, Trevor
 const BOOKING_URL     = "https://awakenzenspa.com/booking";
 const GIFT_CARD_URL   = "https://awakenzenspa.com/gift-cards";
 const LOCATION_ID     = "TMRQ3D20EFD1X";
@@ -324,12 +322,6 @@ function isLiveWindow() {
 app.post("/incoming", (req, res) => {
   const twiml = new VoiceResponse();
   let callOutcome;
-
-  // Store A-leg SID so /leave-voicemail can redirect the caller directly to voicemail
-  if (req.body.From && req.body.CallSid) {
-    activeCallSids.set(req.body.From, req.body.CallSid);
-    setTimeout(() => activeCallSids.delete(req.body.From), 30 * 60 * 1000); // auto-expire after 30 min
-  }
 
   if (isLiveWindow()) {
     const dial = twiml.dial({ timeout: 20, action: "/no-answer" });
@@ -2109,44 +2101,6 @@ app.post("/voicemail/listened", async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Route: Vapi tool — leave_voicemail (redirects active call to recorder) ───
-app.post("/leave-voicemail", async (req, res) => {
-  const toolCallId = extractToolCallId(req.body);
-  try {
-    const callerPhone = req.body?.message?.call?.customer?.number;
-    const BASE        = process.env.BASE_URL || "https://awaken-zen-kai-production.up.railway.app";
-
-    // Look up the A-leg (caller ↔ Twilio) SID stored when /incoming fired
-    const parentSid = callerPhone ? activeCallSids.get(callerPhone) : null;
-
-    // Fallback: try to resolve via Twilio API using Vapi's reported SID
-    let targetSid = parentSid;
-    if (!targetSid) {
-      const vapiSid = req.body?.message?.call?.phoneCallProviderId;
-      if (vapiSid) {
-        try {
-          const call = await twilioClient.calls(vapiSid).fetch();
-          targetSid = call.parentCallSid || vapiSid;
-        } catch (_) {
-          targetSid = vapiSid;
-        }
-      }
-    }
-
-    if (targetSid) {
-      await twilioClient.calls(targetSid).update({ url: `${BASE}/voicemail`, method: "POST" });
-      console.log(`[leave-voicemail] Redirected A-leg ${targetSid} to voicemail (caller: ${callerPhone})`);
-      if (callerPhone) activeCallSids.delete(callerPhone);
-    } else {
-      console.warn("[leave-voicemail] No call SID found — cannot redirect");
-    }
-
-    vapiResponse(res, toolCallId, "Connecting you to voicemail now. Please stay on the line.");
-  } catch (e) {
-    console.error("[leave-voicemail]", e.message);
-    vapiResponse(res, toolCallId, "I wasn't able to transfer you. Please call back and let us know you'd like to leave a message.");
-  }
-});
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Awaken Zen Spa — Kai webhook active."));
