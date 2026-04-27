@@ -321,17 +321,12 @@ function isLiveWindow() {
 // ── Route: Inbound call ───────────────────────────────────────────────────────
 app.post("/incoming", (req, res) => {
   const twiml = new VoiceResponse();
-  let callOutcome;
 
-  if (isLiveWindow()) {
-    const dial = twiml.dial({ timeout: 20, action: "/no-answer" });
-    dial.number({ url: `${process.env.BASE_URL}/whisper` }, OWNER_CELLS[0]); // Brant's cell
-    callOutcome = "routed_owner";
-  } else {
-    const dial = twiml.dial({ timeout: 30, action: "/no-answer" });
-    dial.number(VAPI_NUMBER);
-    callOutcome = "routed_vapi";
-  }
+  // Kai is OFF — forward all calls to owner cells showing the spa number as caller ID
+  const dial = twiml.dial({ timeout: 30, action: "/no-answer", callerId: TWILIO_NUMBER });
+  OWNER_CELLS.forEach(cell => dial.number({ url: `${process.env.BASE_URL}/whisper` }, cell));
+  const callOutcome = "routed_owner";
+
   res.type("text/xml");
   res.send(twiml.toString());
 
@@ -354,13 +349,13 @@ app.post("/no-answer", (req, res) => {
   const twiml = new VoiceResponse();
   const unanswered = req.body.DialCallStatus !== "completed" && req.body.DialCallStatus !== "answered";
   if (unanswered) {
-    const dial = twiml.dial();
-    dial.number(VAPI_NUMBER);
+    // Kai is OFF — send missed calls to voicemail instead of Kai
+    twiml.redirect("/voicemail");
   }
   res.type("text/xml");
   res.send(twiml.toString());
 
-  // Log when owner didn't pick up — call fell to voicemail/Vapi fallback
+  // Log when owner didn't pick up — call fell to voicemail
   if (unanswered) {
     logActivity({
       eventType:   "call",
