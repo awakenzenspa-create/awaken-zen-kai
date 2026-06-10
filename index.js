@@ -547,9 +547,20 @@ app.post("/check-availability", async (req, res) => {
     }
 
     const uniqueTimes = filterSlots(slots);
-    const timeList = uniqueTimes.join(", ");
 
-    vapiResponse(res, toolCallId, `For ${serviceLabel} (${isCombo ? `${dur} min massage + 60 min facial` : `${dur} min`}) on ${dateDisplay}, we have: ${timeList}. Which works best for you?`);
+    // Build a display→ISO map so VAPI can pass the exact ISO startAt when booking
+    // (avoids the AI reconstructing the datetime and getting the format wrong)
+    const slotMap = [];
+    for (const displayT of uniqueTimes) {
+      const match = slots.find(s => formatTimeForDisplay(s.start_at) === displayT);
+      if (match) slotMap.push(`${displayT} → ${match.start_at}`);
+    }
+
+    const timeList = uniqueTimes.join(", ");
+    vapiResponse(res, toolCallId,
+      `For ${serviceLabel} (${isCombo ? `${dur} min massage + 60 min facial` : `${dur} min`}) on ${dateDisplay}, we have: ${timeList}. ` +
+      `When the caller picks a time, use these exact startAt values for bookAppointment: ${slotMap.join(" | ")}. Which time works best?`
+    );
 
   } catch (err) {
     console.error("check-availability error:", err);
@@ -604,10 +615,18 @@ app.post("/book-appointment", async (req, res) => {
     }
 
     // ── Build appointment segments ─────────────────────────────────────────────
+    // Fetch current catalog versions so Square doesn't reject with VERSION_MISMATCH
+    const varIdsToFetch = [variationId, facialVariationId].filter(Boolean);
+    let versionMap = {};
+    try {
+      const catalogRes = await squareRequest("POST", "/catalog/batch-retrieve", { object_ids: varIdsToFetch });
+      (catalogRes.objects || []).forEach(obj => { if (obj.id && obj.version) versionMap[obj.id] = obj.version; });
+    } catch (e) { console.warn("[book-appointment] Catalog version fetch failed:", e.message); }
+
     const appointmentSegments = [
       {
         service_variation_id: variationId,
-        service_variation_version: 0,
+        ...(versionMap[variationId] ? { service_variation_version: versionMap[variationId] } : {}),
         duration_minutes: parseInt(dur),
         team_member_id: TEAM_MEMBERS.brant.id
       }
@@ -615,7 +634,7 @@ app.post("/book-appointment", async (req, res) => {
     if (isCombo) {
       appointmentSegments.push({
         service_variation_id: facialVariationId,
-        service_variation_version: 0,
+        ...(versionMap[facialVariationId] ? { service_variation_version: versionMap[facialVariationId] } : {}),
         duration_minutes: 60,
         team_member_id: TEAM_MEMBERS.trevor.id
       });
@@ -623,13 +642,21 @@ app.post("/book-appointment", async (req, res) => {
 
     const serviceLabel = isCombo ? `${service.label} + ${facialSvc.label}` : service.label;
 
+    // Validate and normalise startAt before sending to Square
+    const resolvedStartAt = ensureAzTimezone(startAt);
+    if (!resolvedStartAt || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(resolvedStartAt)) {
+      console.error("[book-appointment] Invalid startAt:", startAt);
+      return vapiResponse(res, toolCallId, "I'm sorry, I had a problem with the appointment time. Could you confirm the date and time you'd like?");
+    }
+
     // Create booking
     const bookingRes = await squareRequest("POST", "/bookings", {
       booking: {
         location_id: LOCATION_ID,
-        start_at: ensureAzTimezone(startAt),
+        start_at: resolvedStartAt,
         customer_id: customerId,
         customer_note: `Booked via Kai AI phone concierge. Card on file required per cancellation policy.`,
+        booking_creator_details: { creator_type: "SELLER" },
         appointment_segments: appointmentSegments
       },
       idempotency_key: `kai-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
@@ -1232,12 +1259,28 @@ async function processActions(responseText, clientPhone, clientName) {
               customerId = createRes.customer?.id;
             }
 
+            // Fetch catalog versions
+            const smsVarIds = [variationId, facialVariationId].filter(Boolean);
+            let smsVersionMap = {};
+            try {
+              const smsCatalogRes = await squareRequest("POST", "/catalog/batch-retrieve", { object_ids: smsVarIds });
+              (smsCatalogRes.objects || []).forEach(obj => { if (obj.id && obj.version) smsVersionMap[obj.id] = obj.version; });
+            } catch (e) { console.warn("[SMS BOOK_APPOINTMENT] Catalog version fetch failed:", e.message); }
+
             const appointmentSegments = [
-              { service_variation_id: variationId, service_variation_version: 0, duration_minutes: parseInt(dur || "60"), team_member_id: TEAM_MEMBERS.brant.id }
+              {
+                service_variation_id: variationId,
+                ...(smsVersionMap[variationId] ? { service_variation_version: smsVersionMap[variationId] } : {}),
+                duration_minutes: parseInt(dur || "60"),
+                team_member_id: TEAM_MEMBERS.brant.id
+              }
             ];
             if (isCombo && facialVariationId) {
               appointmentSegments.push({
-                service_variation_id: facialVariationId, service_variation_version: 0, duration_minutes: 60, team_member_id: TEAM_MEMBERS.trevor.id
+                service_variation_id: facialVariationId,
+                ...(smsVersionMap[facialVariationId] ? { service_variation_version: smsVersionMap[facialVariationId] } : {}),
+                duration_minutes: 60,
+                team_member_id: TEAM_MEMBERS.trevor.id
               });
             }
 
@@ -1249,6 +1292,7 @@ async function processActions(responseText, clientPhone, clientName) {
                 start_at: ensureAzTimezone(isoDateTime),
                 customer_id: customerId,
                 customer_note: "Booked via Kai SMS concierge.",
+                booking_creator_details: { creator_type: "SELLER" },
                 appointment_segments: appointmentSegments
               },
               idempotency_key: `sms-${Date.now()}-${Math.random().toString(36).substr(2,9)}`
